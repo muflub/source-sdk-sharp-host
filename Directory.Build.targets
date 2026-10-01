@@ -1,0 +1,13 @@
+<Project>
+  <Target Name="RequireRoots" BeforeTargets="Restore;_GenerateRestoreGraph;CollectPackageReferences;BeforeBuild"
+          Condition="!Exists('$(RepoRoot)roots.props')">
+    <Error Text="roots.props is missing: run `make setup` (it writes $(MapToolsRoot))." />
+  </Target>
+
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

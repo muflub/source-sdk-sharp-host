@@ -1,0 +1,28 @@
+# TF2 content (D-H6): a read-only volume for game pods, filled once by steamcmd from
+# app 232250 (TF2 Dedicated Server). Never in an image, never in a repo.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: content
+spec:
+  accessModes: [ReadWriteMany]
+  resources: { requests: { storage: 40Gi } }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: content-fill
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: steamcmd
+          image: docker.io/steamcmd/steamcmd:debian
+          args: [+force_install_dir, /content, +login, anonymous, +app_update, "232250", validate, +quit]
+          volumeMounts:
+            - { name: content, mountPath: /content }
+      volumes:
+        - name: content
+          persistentVolumeClaim: { claimName: content }

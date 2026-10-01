@@ -1,0 +1,50 @@
+@page "/admin/parties"
+@inherits AdminPage
+@* Refreshed on load and after each action. The live instance is where a member's lease is. *@
+<h1>Parties</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<Pager Skip="0" Take="int.MaxValue" Shown="Rows.Count" Csv="admin/export/parties.csv" />
+<table id="parties">
+    <tr><th>id</th><th>leader</th><th>created</th><th>members</th><th>live instance</th><th></th></tr>
+    @foreach (var p in Rows)
+    {
+        <tr id="party-@p.Id">
+            <td>@p.Id</td><td>@Name(p.Leader)</td><td>@p.Created.ToString("u")</td>
+            <td>
+                @foreach (var m in p.Members)
+                {
+                    <span>@Name(m) <button class="kick" @onclick="() => AskKick(p, m)">kick</button> </span>
+                }
+            </td>
+            <td>@string.Join(", ", p.Members.Select(m => Leases.GetValueOrDefault(m)).Where(i => i is not null).Distinct())</td>
+            <td><button class="disband" @onclick="() => AskDisband(p)">Disband</button></td>
+        </tr>
+    }
+</table>
+
+@code {
+    IReadOnlyList<Party> Rows = [];
+    Dictionary<string, string> Names = [];
+    Dictionary<string, string?> Leases = [];
+
+    string Name(string id) => Names.TryGetValue(id, out var n) ? $"{n} ({id})" : id;
+
+    protected override async Task LoadAsync() =>
+        (Rows, Names, Leases) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var rows = await tx.Parties.All();
+            var names = new Dictionary<string, string>();
+            var leases = new Dictionary<string, string?>();
+            foreach (var id in rows.SelectMany(p => p.Members.Append(p.Leader)).Distinct())
+            {
+                if (await tx.Characters.Get(id) is { } c) names[id] = c.Name;
+                leases[id] = (await tx.Leases.Get(id))?.InstanceId;
+            }
+            return (rows, names, leases);
+        });
+
+    void AskDisband(Party p) => Ask($"Disband party {p.Id}", new { p.Leader, p.Members }, null, () => Actions.DisbandParty(p.Id));
+    void AskKick(Party p, string member) => Ask($"Kick {Name(member)} from party {p.Id}", new { p.Members }, new { Members = p.Members.Where(m => m != member) },
+        () => Actions.KickFromParty(p.Id, member));
+}

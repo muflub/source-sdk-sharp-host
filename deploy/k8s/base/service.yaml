@@ -1,0 +1,92 @@
+# The service: a singleton holding all state (SQLite on `data`, packs and levels on `maps`).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: descent-service
+spec:
+  replicas: 1
+  serviceName: descent-service-internal
+  selector:
+    matchLabels: { app: descent-service }
+  template:
+    metadata:
+      labels: { app: descent-service }
+    spec:
+      serviceAccountName: descent-service
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: service
+          image: descent-service:latest
+          env:
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - name: DESCENT_Listen__Admin
+              value: "127.0.0.1:5000"
+            - name: DESCENT_Listen__Internal
+              value: "$(POD_IP):5000"
+            - name: DESCENT_Instances__Namespace
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: DESCENT_Data__Path
+              value: /data/host.db
+            - name: DESCENT_MapPool__MapsPath
+              value: /maps
+          ports:
+            - { name: internal, containerPort: 5000 }
+            - { name: game-api, containerPort: 5001 }
+            - { name: gateway-api, containerPort: 5002 }
+            - { name: fastdl, containerPort: 5004 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 5000 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 5000 }
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: maps, mountPath: /maps }
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits: { memory: 4Gi }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 5Gi } }
+    - metadata: { name: maps }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 20Gi } }
+---
+# Game API and gateway API: cluster-internal gRPC.
+apiVersion: v1
+kind: Service
+metadata:
+  name: descent-service
+spec:
+  selector: { app: descent-service }
+  ports:
+    - { name: game-api, port: 5001, targetPort: 5001, appProtocol: kubernetes.io/h2c }
+    - { name: gateway-api, port: 5002, targetPort: 5002, appProtocol: kubernetes.io/h2c }
+---
+# /internal (levels for init containers, bake uploads), /healthz, /metrics: namespace only
+# (NetworkPolicy), never published. The admin UI is loopback inside the pod: `make admin`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: descent-service-internal
+spec:
+  selector: { app: descent-service }
+  ports:
+    - { name: internal, port: 5000, targetPort: 5000 }
+---
+# The one HTTP port the outside can reach: fastdl, *.bsp.bz2 only (Q18).
+apiVersion: v1
+kind: Service
+metadata:
+  name: descent-fastdl
+spec:
+  type: LoadBalancer
+  selector: { app: descent-service }
+  ports:
+    - { name: fastdl, port: 5004, targetPort: 5004 }

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Abstractions/Host.Abstractions.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+  <!-- The map tools, as a library, from the one build-time root (plan Q1, Q16). -->
+  <ItemGroup>
+    <ProjectReference Include="$(MapToolsRoot)src/SourceSharp.MapTools/SourceSharp.MapTools.csproj" />
+    <ProjectReference Include="$(MapToolsRoot)src/SourceSharp.MapFormats/SourceSharp.MapFormats.csproj" />
+    <ProjectReference Include="$(MapToolsRoot)src/SourceSharp.RoomContracts/SourceSharp.RoomContracts.csproj" />
+    <!-- The tools' incremental room store (§9.2: a one-room edit re-bakes one room). -->
+    <ProjectReference Include="$(MapToolsRoot)src/SourceSharp.MapTools.Cache.Sqlite/SourceSharp.MapTools.Cache.Sqlite.csproj" />
+  </ItemGroup>
+</Project>

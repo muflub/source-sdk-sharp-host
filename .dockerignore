@@ -1,0 +1,8 @@
+bin/
+**/bin/
+**/obj/
+roots.props
+local-k3s.yaml
+.git/
+.exec-state.md
+live/out/

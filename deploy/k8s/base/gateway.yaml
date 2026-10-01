@@ -1,0 +1,53 @@
+# The UDP gateway: one replica (§8.1), a route table it rebuilds from the service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: descent-gateway
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: descent-gateway }
+  template:
+    metadata:
+      labels: { app: descent-gateway }
+    spec:
+      containers:
+        - name: gateway
+          image: descent-gateway:latest
+          env:
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - name: GATEWAY_Service
+              value: http://descent-service:5002
+          ports:
+            - { name: game, containerPort: 27015, protocol: UDP }
+            - { name: control, containerPort: 5003 }
+            - { name: health, containerPort: 5006 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 5006 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 128Mi }
+            limits: { memory: 1Gi }
+---
+# Public UDP. externalTrafficPolicy Local keeps the client's source address (H0b checks it).
+apiVersion: v1
+kind: Service
+metadata:
+  name: descent-gateway
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector: { app: descent-gateway }
+  ports:
+    - { name: game, port: 27015, targetPort: 27015, protocol: UDP }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: descent-gateway-control
+spec:
+  selector: { app: descent-gateway }
+  ports:
+    - { name: control, port: 5003, targetPort: 5003, appProtocol: kubernetes.io/h2c }

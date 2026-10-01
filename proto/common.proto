@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package descent.host.v1;
+
+option csharp_namespace = "SourceSharp.Host.Proto";
+
+// Opaque payloads (plan §6, H1b). Sheets, items' instance data and checkpoint
+// evidence cross every boundary as bytes + schema_version, decoded only by the
+// rules module's own codecs (IGameRules.Sheets / .Items). Host.Proto never
+// learns a stat name.
+message Blob {
+  bytes data = 1;
+  uint32 schema_version = 2;
+}
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+// Business refusals travel as gRPC status codes whose detail starts with a
+// machine reason, "<reason>: <human text>", mirrored in the "x-reason" trailer:
+//   UNAUTHENTICATED     bad_token, unknown_instance
+//   PERMISSION_DENIED   wrong_instance, not_a_hub, quarantined
+//   FAILED_PRECONDITION stale_lease, already_leased, wrong_owner, version_conflict,
+//                       no_capacity, forged_reveal, replay_mismatch, trade_state,
+//                       insufficient_funds, not_in_party, party_full
+//   NOT_FOUND           no_character, no_item, no_party, no_trade
+//   RESOURCE_EXHAUSTED  pool_empty, instance_cap
+//   UNIMPLEMENTED       sdk_version, contract_version
+// The SDK maps each to a typed result; the game never parses a string.
+
+enum OwnerKind {
+  OWNER_KIND_UNSPECIFIED = 0;
+  OWNER_KIND_RESERVE = 1;
+  OWNER_KIND_WORLD = 2;
+  OWNER_KIND_CORPSE = 3;
+  OWNER_KIND_VENDOR = 4;
+  OWNER_KIND_CHARACTER = 5;
+  OWNER_KIND_STASH = 6;
+  OWNER_KIND_TRADE_ESCROW = 7;
+  OWNER_KIND_LOST_AND_FOUND = 8;
+  OWNER_KIND_ADMIN = 9;
+}
+
+enum ItemState {
+  ITEM_STATE_UNSPECIFIED = 0;
+  ITEM_STATE_LIVE = 1;
+  ITEM_STATE_SWEPT = 2;
+  ITEM_STATE_DESTROYED = 3;
+  ITEM_STATE_CONSUMED = 4;
+}
+
+message Item {
+  string id = 1;              // ULID, minted by the service only (R-H1)
+  uint64 seed = 2;
+  string base_type = 3;
+  int32 rarity = 4;
+  int32 ilvl = 5;
+  int32 count = 6;
+  bool identified = 7;
+  Blob instance = 8;
+  OwnerKind owner_kind = 9;
+  string owner_id = 10;
+  int32 slot = 11;            // -1 = unslotted
+  int64 version = 12;
+  string for_character = 13;  // empty = anyone in the instance
+  string instance_id = 14;
+  int32 tier = 15;            // reserve tier, when minted into a reserve
+}
+
+message Character {
+  string id = 1;
+  string account = 2;         // SteamID64 as a decimal string
+  string class_name = 3;
+  string name = 4;
+  bool hardcore = 5;
+  bool fallen = 6;
+  int32 level = 7;
+  int64 xp = 8;
+  int32 reached_depth = 9;
+  int32 difficulty = 10;
+  Blob sheet = 11;
+  int64 australium = 12;
+  int64 version = 13;
+}

@@ -1,0 +1,119 @@
+@page "/admin/instances"
+@inherits AdminPage
+@* Live: the list and the selected pod's log tail refresh every AdminUi:Refresh (polling). *@
+<h1>Instances</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar">
+    <select id="f-kind" @bind="KindText"><option value="">any kind</option><option>Hub</option><option>Level</option></select>
+    <select id="f-state" @bind="StateText"><option value="">non-terminal</option><option value="*">all</option>@foreach (var st in Enum.GetNames<InstanceState>()) { <option value="@st">@st</option> }</select>
+    <button id="create-hub" @onclick="() => Run(() => Actions.CreateHub())">Create hub</button>
+    <span class="note">pods: @(PodsError ?? $"{Pods.Count} listed")</span>
+</div>
+<Pager Skip="0" Take="int.MaxValue" Shown="Shown.Count()" Csv="admin/export/instances.csv" />
+<table id="instances">
+    <tr><th>id</th><th>kind</th><th>state</th><th>depth</th><th>players</th><th>level / pack</th><th>pod</th><th>ip</th><th>phase</th><th>uptime</th><th>heartbeat</th><th>rules</th><th></th></tr>
+    @foreach (var i in Shown)
+    {
+        var pod = i.PodName is null ? null : Pods.GetValueOrDefault(i.PodName);
+        <tr id="inst-@i.Id" class="@(i.Id == Id ? "sel" : "")">
+            <td>@i.Id</td><td>@i.Kind</td><td>@i.State</td><td>@i.Depth</td><td>@i.Players</td>
+            <td>@Short(i.LevelHash) @(i.LevelHash is { } h && PackOf.TryGetValue(h, out var v) ? $"v{v}" : "")</td>
+            <td>@i.PodName</td><td>@i.PodIp</td><td>@(pod is null ? "–" : pod.Uid != i.PodUid ? $"{pod.Phase} (other uid!)" : $"{pod.Phase}{(pod.Ready ? " ready" : "")}")</td>
+            <td>@(i.LiveAt is { } l && !i.Terminal ? Age(l, Now) : "")</td><td>@(i.LastHeartbeat is { } hb ? Age(hb, Now) + " ago" : "")</td><td>@Short(i.RulesSha256, 10)</td>
+            <td>
+                <button class="open" @onclick="() => Open(i.Id)">open</button>
+                @if (!i.Terminal)
+                {
+                    <button class="drain" @onclick="() => AskDrain(i)">Drain</button>
+                    <button class="delete-pod" @onclick="() => AskDeletePod(i)">Delete pod</button>
+                }
+            </td>
+        </tr>
+    }
+</table>
+
+@if (Selected is { } s)
+{
+    <h2 id="detail">@s.Id <span class="note">@s.Kind @s.State · mod @s.ModImage @Short(s.ModImageDigest, 19)</span></h2>
+    <p><a id="devapi" href="admin/instances/@s.Id/devapi/" target="_blank">devapi UI (proxied)</a></p>
+    <div class="bar">
+        <input id="kick-steamid" placeholder="SteamID" @bind="KickSteam" />
+        <button id="kick" @onclick="() => Run(() => Actions.KickPlayer(s.Id, KickSteam ?? string.Empty, KickReason))">Kick</button>
+    </div>
+    <h2>Console</h2>
+    <p>sv_cheats: <b id="sv-cheats">@SvCheats</b></p>
+    <div class="bar">
+        <input id="console" placeholder="command" @bind="Command" style="width:30em" />
+        <button id="exec" @onclick="() => Run(() => Actions.Exec(s.Id, Command ?? string.Empty))">Exec</button>
+    </div>
+    <h2>Log (last @Ui.LogTail lines)</h2>
+    <pre id="log">@Log</pre>
+}
+
+@code {
+    protected override bool Live => true;
+    [SupplyParameterFromQuery(Name = "id")] public string? Id { get; set; }
+    string? KindText, StateText, KickSteam, Command, Log, PodsError;
+    const string KickReason = "kicked by admin";
+    string SvCheats = "";
+    IReadOnlyList<InstanceRecord> Rows = [];
+    Dictionary<string, PodStatus> Pods = [];
+    Dictionary<string, int> PackOf = [];
+    InstanceRecord? Selected;
+
+    IEnumerable<InstanceRecord> Shown => Rows.Where(i =>
+        (string.IsNullOrEmpty(KindText) || i.Kind.ToString() == KindText) &&
+        (StateText == "*" || (string.IsNullOrEmpty(StateText) ? !i.Terminal : i.State.ToString() == StateText)));
+
+    protected override async Task LoadAsync()
+    {
+        IReadOnlyList<AuditEntry> execs = [];
+        (Rows, PackOf, execs) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var rows = await tx.Instances.List(take: 2000);
+            var packs = new Dictionary<string, int>();
+            foreach (var h in rows.Where(r => !r.Terminal && r.LevelHash is not null).Select(r => r.LevelHash!).Distinct())
+                if (await tx.Levels.Get(h) is { } level && await tx.Library.GetPack(level.PackId) is { } pack) packs[h] = pack.Version;
+            var ex = Id is null ? [] : await tx.Audit.List(new AuditQuery(Action: "instance.exec", Target: Id, Take: 200));
+            return (rows, packs, ex);
+        });
+        SvCheats = execs.Select(a => a.AfterJson ?? a.BeforeJson ?? "").Select(CheatsIn).FirstOrDefault(v => v is not null) is { } v
+            ? $"{v} (last set from this console)" : "not set from this console (server default)";
+        Selected = Id is null ? null : Rows.FirstOrDefault(r => r.Id == Id);
+        if (Optional<IInstanceHost>() is not { } host) { PodsError = "no pod host wired"; Log = null; return; }
+        try
+        {
+            Pods = (await host.List(GamePodLabels.Selector)).ToDictionary(p => p.Name);
+            PodsError = null;
+        }
+        catch (Exception e) { PodsError = e.Message; }
+        if (Selected?.PodName is { } name && !Selected.Terminal)
+        {
+            try { Log = await host.Logs(name, Ui.LogTail); }
+            catch (Exception e) { Log = $"(log unavailable: {e.Message})"; }
+        }
+        else Log = Selected is null ? null : "(no running pod)";
+    }
+
+    /// <summary>The value of sv_cheats in an audited exec's command, if it set it.</summary>
+    static string? CheatsIn(string json)
+    {
+        try
+        {
+            if (JsonDocument.Parse(json).RootElement.TryGetProperty("command", out var c) && c.GetString() is { } cmd)
+            {
+                var parts = cmd.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2 && parts[0] == "sv_cheats") return parts[1];
+            }
+        }
+        catch (JsonException) { }
+        return null;
+    }
+
+    void AskDrain(InstanceRecord i) => Ask($"Drain {i.Id}", new { i.State }, new { State = InstanceState.Draining }, () => Actions.DrainInstance(i.Id, "admin drain"));
+    void AskDeletePod(InstanceRecord i) => Ask($"Delete pod {i.PodName} ({i.PodUid}): the instance is treated as crashed",
+        new { i.PodName, i.PodUid, i.State }, null, () => Actions.DeletePod(i.Id));
+
+    Task Open(string id) { Id = id; Last = null; return Reload(); }
+}

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Relay/Host.Relay.csproj" />
+    <ProjectReference Include="../Host.FakeClient/Host.FakeClient.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+</Project>

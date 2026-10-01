@@ -1,0 +1,19 @@
+@* Paging for list pages; the CSV link exports the same filters, all rows. *@
+<div class="bar">
+    <button id="prev" disabled="@(Skip == 0)" @onclick="() => OnPage.InvokeAsync(Math.Max(0, Skip - Take))">‹ prev</button>
+    <span class="note">rows @(Shown == 0 ? 0 : Skip + 1)–@(Skip + Shown)@(Total is { } t ? $" of {t}" : "")</span>
+    <button id="next" disabled="@(Shown < Take)" @onclick="() => OnPage.InvokeAsync(Skip + Take)">next ›</button>
+    @if (Csv is not null)
+    {
+        <a id="csv" href="@Csv">CSV</a>
+    }
+</div>
+
+@code {
+    [Parameter] public int Skip { get; set; }
+    [Parameter] public int Take { get; set; }
+    [Parameter] public int Shown { get; set; }
+    [Parameter] public int? Total { get; set; }
+    [Parameter] public string? Csv { get; set; }
+    [Parameter] public EventCallback<int> OnPage { get; set; }
+}

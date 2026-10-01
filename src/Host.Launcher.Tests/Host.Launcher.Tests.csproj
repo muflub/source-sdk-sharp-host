@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Launcher/Host.Launcher.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+    <ProjectReference Include="../Host.Relay/Host.Relay.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

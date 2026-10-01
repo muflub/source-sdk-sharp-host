@@ -1,0 +1,93 @@
+@page "/admin/gateway"
+@inherits AdminPage
+@* Live: refreshed every AdminUi:Refresh (polling). Sessions and pins from the store; routes, admission and A2S from the gateway (IAdminGateway). *@
+<h1>Gateway</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+@if (Optional<IAdminGateway>() is null)
+{
+    <p class="note" id="gw-state">the gateway control is not wired into this service</p>
+}
+else if (Snap is null)
+{
+    <p class="note" id="gw-state">loading…</p>
+}
+else if (!Snap.Reachable)
+{
+    <p class="refused" id="gw-state">gateway unreachable: @Snap.Error</p>
+}
+else
+{
+    <p id="gw-state">routes @Snap.Routes.Count · admission queue @Snap.AdmissionQueue · pins @Snap.PinPoolUsed / @Snap.PinPoolSize · A2S: <code>@Snap.A2S</code></p>
+}
+<div class="bar">
+    <input id="ban-address" placeholder="address to ban" @bind="BanTarget" />
+    <input id="ban-note" placeholder="note" @bind="BanNote" />
+    <button id="ban" @onclick="() => Run(() => Actions.BanAddress(BanTarget ?? string.Empty, BanNote))">Ban address</button>
+</div>
+
+<h2>Sessions</h2>
+<Pager Skip="0" Take="int.MaxValue" Shown="Sessions.Count" Csv="admin/export/sessions.csv" />
+<table id="sessions">
+    <tr><th>id</th><th>address</th><th>backend</th><th>SteamID</th><th>instance</th><th>state</th><th>age</th><th>bytes in/out</th><th></th></tr>
+    @foreach (var s in Sessions)
+    {
+        var route = Snap?.Routes.FirstOrDefault(r => r.SessionId == s.Id);
+        <tr id="session-@s.Id">
+            <td>@s.Id</td><td>@s.ClientAddr</td><td>@s.Backend</td><td>@s.SteamId</td><td>@s.InstanceId</td><td>@s.State</td><td>@Age(s.Opened, Now)</td>
+            <td>@(route is null ? "" : $"{route.BytesIn:N0} / {route.BytesOut:N0}")</td>
+            <td>
+                <button class="close" @onclick="() => AskClose(s)">Close</button>
+                <button class="hub" @onclick="() => Run(() => Actions.ForceToHub(s.Id))">Force to hub</button>
+                <button class="ban-session" @onclick="() => BanTarget = HostOf(s.ClientAddr)">Ban…</button>
+            </td>
+        </tr>
+    }
+</table>
+
+<h2>Routes (the gateway's table)</h2>
+<table id="routes">
+    <tr><th>session</th><th>client</th><th>SteamID</th><th>backend</th><th>since</th></tr>
+    @foreach (var r in Snap?.Routes ?? [])
+    {
+        <tr><td>@r.SessionId</td><td>@r.ClientAddr</td><td>@r.SteamId</td><td>@r.Backend</td><td>@Age(r.Since, Now)</td></tr>
+    }
+</table>
+
+<h2>Per-player pins</h2>
+<table id="pins">
+    <tr><th>SteamID</th><th>allocator</th><th>peer</th><th>since</th><th>last seen</th><th>previous</th><th></th></tr>
+    @foreach (var p in Pins)
+    {
+        <tr id="pin-@p.SteamId">
+            <td>@p.SteamId</td><td>@p.Allocator</td><td>@p.PinnedPeer</td><td>@p.Since.ToString("u")</td><td>@p.LastSeen.ToString("u")</td><td>@string.Join(" ", p.Previous)</td>
+            <td><button class="unpin" @onclick="() => AskUnpin(p)">Release pin</button></td>
+        </tr>
+    }
+</table>
+@if (Snap is { BannedAddresses.Count: > 0 })
+{
+    <h2>Banned addresses</h2>
+    <p id="banned">@string.Join(", ", Snap.BannedAddresses)</p>
+}
+
+@code {
+    protected override bool Live => true;
+    string? BanTarget, BanNote;
+    AdminGatewaySnapshot? Snap;
+    IReadOnlyList<SessionRecord> Sessions = [];
+    IReadOnlyList<PlayerPin> Pins = [];
+
+    void AskClose(SessionRecord s) => Ask($"Close session {s.Id}", new { s.State }, new { State = "closed" }, () => Actions.CloseSession(s.Id));
+    void AskUnpin(PlayerPin p) => Ask($"Release {p.SteamId}'s pin", new { p.PinnedPeer }, null, () => Actions.ReleasePin(p.SteamId));
+
+    static string HostOf(string addr) => System.Net.IPEndPoint.TryParse(addr, out var ep) ? ep.Address.ToString() : addr;
+
+    protected override async Task LoadAsync()
+    {
+        (Sessions, Pins) = await Data.ReadAsync(async (tx, _) => (await tx.Sessions.Open(), await tx.Sessions.Pins()));
+        if (Optional<IAdminGateway>() is not { } gw) { Snap = null; return; }
+        try { Snap = await gw.Snapshot(); }
+        catch (Exception e) when (e is HttpRequestException or IOException or InvalidOperationException or TimeoutException) { Snap = AdminGatewaySnapshot.Unreachable(e.Message); }
+    }
+}

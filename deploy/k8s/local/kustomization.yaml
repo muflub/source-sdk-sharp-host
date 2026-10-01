@@ -1,0 +1,52 @@
+# The local k3s overlay (plan H1e's `k3d` overlay, on this box's k3s): images from the
+# in-cluster registry, Development, small resources, TF2 content from the local install
+# through a hostPath PV (the path is filled in by `make deploy`), no content-fill Job.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: descent
+resources:
+  - ../base
+  - content-pv.yaml
+images:
+  - { name: descent-service, newName: localhost:30500/descent-service, newTag: latest }
+  - { name: descent-gateway, newName: localhost:30500/descent-gateway, newTag: latest }
+patches:
+  - target: { kind: Job, name: content-fill }
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata: { name: content-fill }
+  - target: { kind: PersistentVolumeClaim, name: content }
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          accessModes: [ReadOnlyMany]
+          storageClassName: ""
+          volumeName: descent-content-local
+          resources: { requests: { storage: 1Gi } }
+  - target: { kind: StatefulSet, name: descent-service }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: ASPNETCORE_ENVIRONMENT, value: Development }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: DESCENT_Instances__EngineImage, value: "localhost:30500/descent-engine:latest" }
+      # The mod label check reads the image from its registry; inside a pod "localhost:30500" is
+      # the pod itself, not the node's registry, so the check would fail closed. Local only.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: DESCENT_Instances__VerifyModLabel, value: "false" }
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 2Gi } }
+      - op: replace
+        path: /spec/volumeClaimTemplates/1/spec/resources/requests/storage
+        value: 5Gi
+  - target: { kind: Deployment, name: descent-gateway }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 512Mi } }

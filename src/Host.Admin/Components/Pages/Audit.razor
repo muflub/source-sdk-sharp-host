@@ -1,0 +1,40 @@
+@page "/admin/audit"
+@inherits AdminPage
+@* Read only (§11). Refreshed on load and on filter/page changes. *@
+<h1>Audit log</h1>
+<ResultBanner Error="@LoadError" />
+<div class="bar">
+    <input id="f-actor" placeholder="actor" @bind="Actor" />
+    <input id="f-action" placeholder="action" @bind="Action" />
+    <input id="f-target" placeholder="target" @bind="Target" />
+    <button id="filter" @onclick="Filter">Filter</button>
+</div>
+<Pager Skip="Skip" Take="Ui.PageSize" Shown="Rows.Count" Total="Total" Csv="@Csv" OnPage="Page" />
+<table id="audit">
+    <tr><th>at</th><th>actor</th><th>action</th><th>target</th><th>before</th><th>after</th></tr>
+    @foreach (var a in Rows)
+    {
+        <tr>
+            <td>@a.At.ToString("u")</td><td>@a.Actor</td><td>@a.Action</td><td>@a.Target</td>
+            <td><code>@a.BeforeJson</code></td><td><code>@a.AfterJson</code></td>
+        </tr>
+    }
+</table>
+
+@code {
+    string? Actor, Action, Target;
+    int Skip;
+    int Total;
+    IReadOnlyList<AuditEntry> Rows = [];
+
+    string Csv => $"admin/export/audit.csv?actor={Uri.EscapeDataString(Actor ?? "")}&action={Uri.EscapeDataString(Action ?? "")}&target={Uri.EscapeDataString(Target ?? "")}";
+
+    AuditQuery Query => new(Nz(Actor), Nz(Action), Nz(Target), Skip, Ui.PageSize);
+    static string? Nz(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    protected override async Task LoadAsync() =>
+        (Rows, Total) = await Data.ReadAsync(async (tx, _) => (await tx.Audit.List(Query), await tx.Audit.Count(Query with { Skip = 0 })));
+
+    Task Filter() { Skip = 0; return Reload(); }
+    Task Page(int skip) { Skip = skip; return Reload(); }
+}

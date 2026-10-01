@@ -1,0 +1,10 @@
+bin/
+obj/
+roots.props
+*.user
+*.db
+*.db-shm
+*.db-wal
+.exec-state.md
+live/out/
+local-k3s.yaml

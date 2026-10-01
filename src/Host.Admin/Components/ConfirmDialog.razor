@@ -1,0 +1,23 @@
+@* Edit and Delete ask first, and show what changes (plan §11). *@
+@if (Pending is not null)
+{
+    <div class="dialog" id="confirm-dialog">
+        <h2>@Pending.Title</h2>
+        @if (Pending.Before.Length > 0 || Pending.After.Length > 0)
+        {
+            <pre class="diff">@foreach (var (mark, line) in AdminJson.Diff(Pending.Before, Pending.After))
+{<span class="@(mark == '-' ? "del" : mark == '+' ? "add" : "")">@mark @line
+</span>}</pre>
+        }
+        <div class="bar">
+            <button id="confirm" @onclick="OnConfirm">Confirm</button>
+            <button id="cancel" @onclick="OnCancel">Cancel</button>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public AdminConfirm? Pending { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}

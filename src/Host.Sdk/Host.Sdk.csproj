@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- Host.Proto ships inside this package (plan §6.6 "Delivery"): no SourceSharp.Host.Proto package
+         exists, so the reference is private and its DLL is added to lib/ below. -->
+    <ProjectReference Include="../Host.Proto/Host.Proto.csproj" PrivateAssets="all" />
+    <ProjectReference Include="../Host.Contracts/Host.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.Client" />
+    <!-- Host.Proto's own dependency, which a private reference no longer flows to consumers. -->
+    <PackageReference Include="Google.Protobuf" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SourceSharp.Host.Sdk.Tests" />
+  </ItemGroup>
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);PackHostProto</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <Target Name="PackHostProto" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)" Condition="'%(Filename)%(Extension)' == 'SourceSharp.Host.Proto.dll'" />
+    </ItemGroup>
+  </Target>
+</Project>

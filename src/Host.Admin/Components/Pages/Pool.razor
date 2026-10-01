@@ -1,0 +1,101 @@
+@page "/admin/pool"
+@inherits AdminPage
+@* Live: refreshed every AdminUi:Refresh (polling). *@
+<h1>Map pool</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<p id="pool-state">@(Status is null ? "the pool worker is not wired into this service" : Status.WaitingForRules ? Status.Message : $"ready · last tick {Status.LastTick:u}")</p>
+<table id="depths">
+    <tr><th>depth</th><th>K</th><th>ready</th><th>handed out</th><th>retired</th><th>failed</th><th>in flight</th><th></th></tr>
+    @foreach (var d in Depths)
+    {
+        <tr id="depth-@d.Depth">
+            <td>@d.Depth</td><td>@d.K @(d.Overridden ? "(runtime)" : "")</td><td>@d.Ready</td><td>@d.HandedOut</td><td>@d.Retired</td><td>@d.Failed</td>
+            <td>@(Status?.Depths.FirstOrDefault(x => x.Depth == d.Depth)?.InFlight.ToString() ?? "")</td>
+            <td>
+                <button class="regen" @onclick="() => AskRegen(d)">Regenerate</button>
+                <input class="k-in" type="number" @bind="NewK" style="width:4em" />
+                <button class="set-k" @onclick="() => Run(() => Actions.SetPerDepth(d.Depth, NewK))">Set K</button>
+                <button class="levels" @onclick="() => ShowDepth(d.Depth)">levels</button>
+            </td>
+        </tr>
+    }
+</table>
+
+<h2>Job queue</h2>
+<Pager Skip="0" Take="int.MaxValue" Shown="Jobs.Count" Csv="admin/export/jobs.csv" />
+<table id="jobs">
+    <tr><th>id</th><th>kind</th><th>key</th><th>priority</th><th>state</th><th>attempts</th><th>started</th><th>finished</th><th>log</th><th></th></tr>
+    @foreach (var j in Jobs)
+    {
+        <tr id="job-@j.Id">
+            <td>@j.Id</td><td>@j.Kind</td><td>@j.Key</td><td>@j.Priority</td><td>@j.State</td><td>@j.Attempts</td><td>@j.Started?.ToString("u")</td><td>@j.Finished?.ToString("u")</td>
+            <td><code>@Short(j.Log, 80)</code></td>
+            <td>@if (j.State is MapJobState.Failed or MapJobState.Done) { <button class="requeue" @onclick="() => Run(() => Actions.RequeueJob(j.Id))">Requeue</button> }</td>
+        </tr>
+    }
+</table>
+
+@if (Depth is { } depth)
+{
+    <h2 id="levels-of">Levels of depth @depth</h2>
+    <table id="levels">
+        <tr><th>hash</th><th>pack</th><th>tileset</th><th>seed</th><th>difficulty</th><th>state</th><th>created</th><th>handed to</th><th>bytes</th><th>files</th><th></th></tr>
+        @foreach (var l in Levels)
+        {
+            <tr id="level-@l.Hash">
+                <td>@l.Hash</td><td>@l.PackId</td><td>@l.Tileset</td><td>@l.Seed</td><td>@l.Difficulty</td><td>@l.State @l.Error</td><td>@l.Created.ToString("u")</td><td>@l.HandedTo</td><td>@l.Bytes.ToString("N0")</td>
+                <td>@foreach (var ext in new[] { ".bsp", ".yaml", ".nav3d", ".map2d" }) { <a href="admin/levels/@l.Hash/file@(ext)">@ext</a> <text> </text> }</td>
+                <td>
+                    @if (l.State != LevelState.HandedOut)
+                    {
+                        @if (l.State != LevelState.Retired)
+                        {
+                            <button class="retire" @onclick="() => AskRetire(l)">Retire</button>
+                        }
+                        <button class="delete" @onclick="() => AskDelete(l)">Delete</button>
+                    }
+                </td>
+            </tr>
+        }
+    </table>
+    <p class="note">layout SVG from .map2d and the oracle diff are not in v1 (see Room packs for the pack side).</p>
+}
+
+@code {
+    protected override bool Live => true;
+    sealed record DepthRow(int Depth, int K, bool Overridden, int Ready, int HandedOut, int Retired, int Failed);
+    [SupplyParameterFromQuery(Name = "depth")] public int? Depth { get; set; }
+    int NewK = 3;
+    PoolStatus? Status;
+    IReadOnlyList<DepthRow> Depths = [];
+    IReadOnlyList<MapJob> Jobs = [];
+    IReadOnlyList<LevelRecord> Levels = [];
+
+    protected override async Task LoadAsync()
+    {
+        Status = Optional<IMapPool>()?.Status;
+        var pool = Options.MapPool;
+        (Depths, Jobs, Levels) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var settings = (await tx.Settings.All()).ToDictionary(s => s.Key, s => s.ValueJson);
+            var rows = new List<DepthRow>();
+            for (var d = 1; d <= pool.Depths; d++)
+            {
+                var over = settings.TryGetValue($"MapPool.PerDepth.{d}", out var v) && int.TryParse(v, out var k) ? k : (int?)null;
+                rows.Add(new DepthRow(d, over ?? pool.PerDepthFor(d), over is not null,
+                    await tx.Levels.Count(d, null, LevelState.Ready), await tx.Levels.Count(d, null, LevelState.HandedOut),
+                    await tx.Levels.Count(d, null, LevelState.Retired), await tx.Levels.Count(d, null, LevelState.Failed)));
+            }
+            return ((IReadOnlyList<DepthRow>)rows, await tx.MapJobs.List(take: 200),
+                Depth is { } dd ? await tx.Levels.List(depth: dd, take: 200) : (IReadOnlyList<LevelRecord>)[]);
+        });
+    }
+
+    void AskRegen(DepthRow d) => Ask($"Regenerate depth {d.Depth}: its {d.Ready} ready level(s) retire", new { d.Ready }, new { Ready = 0 }, () => Actions.RegenerateDepth(d.Depth));
+    void AskRetire(LevelRecord l) => Ask($"Retire level {l.Hash}", new { l.State }, new { State = LevelState.Retired }, () => Actions.RetireLevel(l.Hash));
+    void AskDelete(LevelRecord l) => Ask($"Delete level {l.Hash} and its files", new { l.State, Files = true }, new { State = LevelState.Retired, Files = false },
+        () => Actions.DeleteLevel(l.Hash));
+
+    Task ShowDepth(int depth) { Depth = depth; return Reload(); }
+}

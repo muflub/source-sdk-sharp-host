@@ -1,0 +1,7 @@
+library: crypt.vmf
+rows: 1
+columns: 3
+up_map: descent-2
+down_map: descent-4
+grid:
+  - [end, cross@90, corner]

@@ -1,0 +1,21 @@
+@* The last action's outcome; a leased refusal offers "Kick and edit" (Q21). *@
+@if (Result is not null)
+{
+    <div id="result" class="@(Result.Outcome switch { AdminOutcome.Done => "ok", AdminOutcome.Leased => "leased", _ => "refused" })">
+        @(Result.Reason is { } r && Result.Outcome == AdminOutcome.Refused ? $"{r}: " : "")@Result.Message
+        @if (Result.Outcome == AdminOutcome.Leased)
+        {
+            <button id="kick-and-edit" @onclick="OnKickAndEdit">Kick and edit</button>
+        }
+    </div>
+}
+@if (Error is not null)
+{
+    <div class="refused" id="load-error">could not load: @Error</div>
+}
+
+@code {
+    [Parameter] public AdminResult? Result { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback OnKickAndEdit { get; set; }
+}

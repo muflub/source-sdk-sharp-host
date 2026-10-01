@@ -1,0 +1,129 @@
+@page "/admin/items"
+@inherits AdminPage
+@* Refreshed on search and after each action. instance_json is shown and edited through the rules' item codec. *@
+<h1>Items</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar">
+    <select id="f-owner-kind" @bind="OwnerKindText"><option value="">any owner</option>@foreach (var k in Enum.GetNames<OwnerKind>()) { <option value="@k">@k</option> }</select>
+    <input id="f-owner-id" placeholder="owner id" @bind="OwnerId" />
+    <input id="f-base" placeholder="base type" @bind="BaseType" />
+    <input id="f-rarity" placeholder="rarity" type="number" @bind="Rarity" style="width:5em" />
+    <input id="f-min" placeholder="min ilvl" type="number" @bind="MinIlvl" style="width:5em" />
+    <input id="f-max" placeholder="max ilvl" type="number" @bind="MaxIlvl" style="width:5em" />
+    <input id="f-id" placeholder="id starts with" @bind="IdPrefix" />
+    <button id="search" @onclick="Search">Search</button>
+</div>
+<Pager Skip="Skip" Take="Ui.PageSize" Shown="Rows.Count" Total="Total" Csv="@Csv" OnPage="Page" />
+<table id="items">
+    <tr><th>id</th><th>base</th><th>rarity</th><th>ilvl</th><th>count</th><th>owner</th><th>slot</th><th>instance</th><th>minted</th><th>flags</th><th></th></tr>
+    @foreach (var i in Rows)
+    {
+        <tr class="@(i.Id == Id ? "sel" : "")">
+            <td>@i.Id</td><td>@i.BaseType</td><td>@i.Rarity</td><td>@i.ItemLevel</td><td>@i.Count</td><td>@i.OwnerKind @i.OwnerId</td><td>@i.Slot</td>
+            <td>@i.InstanceId</td><td>@i.MintedBy @i.MintedAt.ToString("u")</td><td>@(i.AdminEdited ? "admin_edited" : "")@(i.Identified ? "" : " unidentified")</td>
+            <td><button class="open" @onclick="() => Open(i.Id)">open</button></td>
+        </tr>
+    }
+</table>
+
+@if (Selected is { } s)
+{
+    <h2 id="detail">@s.BaseType <span class="note">@s.Id · @s.State · version @s.Version @(s.AdminEdited ? "· admin_edited" : "")</span></h2>
+    @if (JsonError is not null)
+    {
+        <p class="refused">@JsonError</p>
+    }
+    else
+    {
+        <textarea id="instance-json" @bind="JsonText"></textarea>
+        <div class="bar"><button id="save-item" @onclick="() => AskEdit(s)">Save</button> <span class="note">an item that no longer replays is flagged admin_edited</span></div>
+    }
+    <div class="bar">
+        <select id="move-kind" @bind="MoveKind">@foreach (var k in new[] { OwnerKind.Character, OwnerKind.Stash, OwnerKind.LostAndFound, OwnerKind.Admin }) { <option value="@k">@k</option> }</select>
+        <input id="move-owner" placeholder="owner id" @bind="MoveOwner" />
+        <input id="move-slot" type="number" @bind="MoveSlot" style="width:5em" />
+        <button id="move" @onclick="() => AskMove(s)">Move</button>
+    </div>
+    <div class="bar">
+        <input id="destroy-reason" placeholder="reason" @bind="DestroyReason" />
+        <button id="destroy" @onclick="() => AskDestroy(s)">Destroy</button>
+    </div>
+    <h2>History</h2>
+    <table id="events">
+        <tr><th>at</th><th>kind</th><th>from</th><th>to</th><th>instance</th><th>request</th><th>actor</th></tr>
+        @foreach (var e in Events)
+        {
+            <tr><td>@e.At.ToString("u")</td><td>@e.Kind</td><td>@e.FromOwner</td><td>@e.ToOwner</td><td>@e.InstanceId</td><td>@e.RequestId</td><td>@e.Actor</td></tr>
+        }
+    </table>
+}
+
+<h2>Give (mint)</h2>
+<div class="bar">
+    <select id="give-kind" @bind="GiveKind"><option value="Character">Character</option><option value="Stash">Stash</option></select>
+    <input id="give-owner" placeholder="character id or stash owner" @bind="GiveOwner" />
+    <input id="give-slot" type="number" @bind="GiveSlot" style="width:5em" />
+</div>
+<textarea id="give-json" placeholder="item JSON (the rules codec's; open an item to start from a copy)" @bind="GiveJson"></textarea>
+<div class="bar"><button id="give" @onclick="() => Run(() => Actions.GiveItem(new AdminItemTarget(GiveKind, GiveOwner ?? string.Empty, GiveSlot), GiveJson ?? string.Empty))">Give</button></div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "id")] public string? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "owner")] public string? OwnerQuery { get; set; }
+    string? OwnerKindText, OwnerId, BaseType, IdPrefix, JsonText, JsonOriginal, JsonError, MoveOwner, DestroyReason, GiveOwner, GiveJson;
+    int? Rarity, MinIlvl, MaxIlvl;
+    OwnerKind MoveKind = OwnerKind.Character, GiveKind = OwnerKind.Character;
+    int MoveSlot = -1, GiveSlot = -1;
+    int Skip, Total;
+    IReadOnlyList<ItemRecord> Rows = [];
+    ItemRecord? Selected;
+    IReadOnlyList<ItemEvent> Events = [];
+
+    protected override void OnInitialized() => OwnerId ??= OwnerQuery;
+
+    ItemQuery Query => AdminCsv.ItemQueryFrom(k => k switch
+    {
+        "ownerKind" => OwnerKindText, "ownerId" => Nz(OwnerId), "baseType" => Nz(BaseType), "id" => Nz(IdPrefix), _ => null,
+    }, k => k switch { "rarity" => Rarity, "minIlvl" => MinIlvl, "maxIlvl" => MaxIlvl, _ => null }, Ui.PageSize, Skip);
+
+    string Csv => $"admin/export/items.csv?ownerKind={OwnerKindText}&ownerId={Uri.EscapeDataString(OwnerId ?? "")}&baseType={Uri.EscapeDataString(BaseType ?? "")}&rarity={Rarity}&minIlvl={MinIlvl}&maxIlvl={MaxIlvl}&id={Uri.EscapeDataString(IdPrefix ?? "")}";
+    static string? Nz(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    protected override async Task LoadAsync()
+    {
+        (Rows, Total, Selected, Events) = await Data.ReadAsync(async (tx, _) =>
+        (
+            await tx.Items.Query(Query), await tx.Items.Count(Query with { Skip = 0 }),
+            Id is null ? null : await tx.Items.Get(Id),
+            Id is null ? (IReadOnlyList<ItemEvent>)[] : await tx.Items.Events(Id)
+        ));
+        JsonError = null;
+        if (Selected is null) return;
+        var rules = Optional<IRulesProvider>()?.Current;
+        if (rules is null) { JsonError = PoolStatus.WaitingForRulesMessage + ": the item cannot be decoded"; return; }
+        try { JsonOriginal = rules.Items.ToJson(rules.Items.Decode(Selected.Instance, Selected.SchemaVersion)); }
+        catch (Exception e) when (e is InvalidDataException or JsonException) { JsonError = $"the rules cannot decode this item: {e.Message}"; return; }
+        JsonText ??= JsonOriginal;
+        GiveJson ??= JsonOriginal;
+    }
+
+    Task Search() { Skip = 0; return Reload(); }
+    Task Page(int skip) { Skip = skip; return Reload(); }
+    Task Open(string id) { Id = id; JsonText = null; Last = null; return Reload(); }
+
+    void AskEdit(ItemRecord i) => Ask($"Edit item {i.Id}", Pretty(JsonOriginal), Pretty(JsonText), () => Actions.EditItem(i.Id, i.Version, JsonText ?? ""));
+
+    void AskMove(ItemRecord i) => Ask($"Move item {i.Id}", new { i.OwnerKind, i.OwnerId, i.Slot }, new { OwnerKind = MoveKind, OwnerId = MoveOwner, Slot = MoveSlot },
+        () => Actions.MoveItem(i.Id, new AdminItemTarget(MoveKind, MoveOwner ?? "", MoveSlot)));
+
+    void AskDestroy(ItemRecord i) => Ask($"Destroy item {i.Id}", new { i.State, i.OwnerKind, i.OwnerId }, new { State = ItemState.Destroyed, Reason = DestroyReason },
+        () => Actions.DestroyItem(i.Id, DestroyReason ?? ""));
+
+    static string Pretty(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try { return JsonSerializer.Serialize(JsonDocument.Parse(json).RootElement, new JsonSerializerOptions { WriteIndented = true }); }
+        catch (JsonException) { return json; }
+    }
+}

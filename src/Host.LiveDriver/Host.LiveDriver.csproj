@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The live gates' driver (live/*.sh): fake clients through the LoadBalancer, FakeGameControl calls. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Host.FakeClient/Host.FakeClient.csproj" />
+    <ProjectReference Include="../Host.FakeGame/Host.FakeGame.csproj" />
+  </ItemGroup>
+</Project>

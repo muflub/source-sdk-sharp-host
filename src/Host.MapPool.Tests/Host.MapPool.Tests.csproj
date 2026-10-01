@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.MapPool/Host.MapPool.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+  </ItemGroup>
+</Project>

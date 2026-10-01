@@ -1,0 +1,208 @@
+syntax = "proto3";
+
+package descent.gateway.v1;
+
+option csharp_namespace = "SourceSharp.Host.Proto.Gateway";
+
+// Service <-> gateway control (plan §8.2, Q5): one stream for health, everything
+// else unary. The service hosts GatewayHealth and GatewayEvents on :5002; the
+// gateway hosts GatewayControl on :5003. Each reachable by the other only.
+
+service GatewayHealth {
+  // gateway -> service, held for the gateway's life. A version mismatch, or the
+  // stream's loss and re-attach, triggers SyncTable.
+  rpc Attach(stream Ping) returns (stream Pong);
+}
+
+message Ping {
+  string gateway_id = 1;
+  uint64 table_version = 2;
+  int32 sessions = 3;
+  uint64 seq = 4;
+  // Lane G, additive: true on the first ping after (re)attach and after a pong
+  // whose table_version differed from ours: the service answers with SyncTable.
+  bool request_sync = 5;
+}
+
+message Pong {
+  uint64 table_version = 1;
+  uint64 seq = 2;
+}
+
+service GatewayEvents {
+  rpc SessionOpened(SessionEvent) returns (EventAck);
+  rpc SessionClosed(SessionEvent) returns (EventAck);
+  rpc SessionMoved(SessionEvent) returns (EventAck);
+  // Identity-first handshake (§8.1b): the gateway read a SteamID from C2S_CONNECT
+  // and asks where it may go before any backend sees the client.
+  rpc Identify(IdentifyRequest) returns (IdentifyResponse);
+  rpc PinAssigned(PlayerPin) returns (EventAck);
+  rpc Stats(GatewayStats) returns (EventAck);
+}
+
+message SessionEvent {
+  string request_id = 1;
+  string session_id = 2;
+  string client_addr = 3;      // ip:port the client sends from
+  string backend = 4;          // ip:port of the game pod
+  string peer = 5;             // ip:port the backend sees for this session
+  string reason = 6;
+  string steamid = 7;          // when known
+}
+
+message EventAck {
+  uint64 table_version = 1;
+}
+
+message IdentifyRequest {
+  string request_id = 1;
+  string session_id = 2;
+  string client_addr = 3;
+  string steamid = 4;
+}
+
+message IdentifyResponse {
+  bool allowed = 1;
+  string reason = 2;
+  string backend = 3;          // hub for a new arrival; the routed instance for a returning one
+  uint64 table_version = 4;
+  repeated string close_sessions = 5; // single presence: silent sessions taken over
+}
+
+message GatewayStats {
+  string gateway_id = 1;
+  int32 sessions = 2;
+  int64 packets_in = 3;
+  int64 packets_out = 4;
+  int64 bytes_in = 5;
+  int64 bytes_out = 6;
+  int32 held_packets = 7;
+  int32 admission_queue = 8;
+}
+
+message PlayerPin {
+  string request_id = 1;
+  string steamid = 2;
+  string pinned_peer = 3;      // ip:port
+  string allocator = 4;        // PortPerPlayer | AddressPerPlayer
+  int64 since_unix_ms = 5;
+  int64 last_seen_unix_ms = 6;
+}
+
+service GatewayControl {
+  rpc SyncTable(RouteTable) returns (ControlAck);
+  rpc SetRoute(SetRouteRequest) returns (ControlAck);
+  rpc CloseSession(CloseSessionRequest) returns (ControlAck);
+  rpc SetDefault(SetDefaultRequest) returns (ControlAck);
+  rpc SetServerInfo(ServerInfo) returns (ControlAck);
+  rpc ReleasePin(ReleasePinRequest) returns (ControlAck);
+  rpc Snapshot(SnapshotRequest) returns (GatewaySnapshot);
+  // Lane G, additive: a backend is (or is no longer) ready to take packets. Sessions
+  // routed to a backend that is not ready hold their packets (8.1b) and replay them,
+  // in arrival order, when it is marked ready.
+  rpc BackendReady(BackendReadyRequest) returns (ControlAck);
+}
+
+message BackendReadyRequest {
+  uint64 version = 1;
+  string backend = 2;
+  bool ready = 3;
+}
+
+message Route {
+  string session_id = 1;
+  string client_addr = 2;
+  string backend = 3;
+  string steamid = 4;
+  bool identified = 5;
+  // Lane G, additive: the peer the session last had, so a restarted gateway rebinds
+  // the same ip:port and a backend keeps seeing the peer it knew (§8.2, SyncTable).
+  string peer = 6;
+}
+
+// Every control call carries the table version it produces; a stale one is
+// refused with FAILED_PRECONDITION, the service's cue to SyncTable.
+message RouteTable {
+  uint64 version = 1;
+  repeated Route routes = 2;
+  string default_backend = 3;
+  repeated PlayerPin pins = 4;
+  repeated string banned_addresses = 5;
+  // Lane G, additive: backends not yet ready; sessions routed to them hold.
+  repeated string unready_backends = 6;
+}
+
+message SetRouteRequest {
+  uint64 version = 1;
+  string client_addr = 2;
+  string backend = 3;
+  // Lane G, additive: binds the session to this SteamID (the hub's PlayerJoined),
+  // which identifies it (a level route needs it) and applies its pin from the
+  // next backend socket on (§8.1a). Empty = leave the identity as it is.
+  string steamid = 4;
+  // Lane G, additive: hold this session's packets to `backend` until BackendReady
+  // marks it ready (a level pod still booting at the flip, 8.1b). Ignored when the
+  // backend has already been marked ready.
+  bool hold_until_ready = 5;
+}
+
+message CloseSessionRequest {
+  uint64 version = 1;
+  string client_addr = 2;
+  string reason = 3;
+}
+
+message SetDefaultRequest {
+  uint64 version = 1;
+  string backend = 2;
+}
+
+message ServerInfo {
+  string name = 1;
+  string map = 2;
+  string folder = 3;
+  string game = 4;
+  int32 players = 5;
+  int32 max_players = 6;
+  int32 bots = 7;
+  repeated A2sPlayer player_list = 8;
+  map<string, string> rules = 9;
+  uint32 app_id = 10;
+  string version = 11;
+}
+
+message A2sPlayer {
+  string name = 1;
+  int32 score = 2;
+  float duration = 3;
+}
+
+message ReleasePinRequest { string steamid = 1; }
+
+message ControlAck {
+  uint64 table_version = 1;
+}
+
+message SnapshotRequest {}
+
+message SessionInfo {
+  string session_id = 1;
+  string client_addr = 2;
+  string backend = 3;
+  string peer = 4;
+  string steamid = 5;
+  string state = 6;
+  int64 opened_unix_ms = 7;
+  int64 last_seen_unix_ms = 8;
+  int64 bytes_in = 9;
+  int64 bytes_out = 10;
+  int32 held = 11;
+}
+
+message GatewaySnapshot {
+  uint64 table_version = 1;
+  repeated SessionInfo sessions = 2;
+  repeated PlayerPin pins = 3;
+  int32 admission_queue = 4;
+  ServerInfo server_info = 5;
+}

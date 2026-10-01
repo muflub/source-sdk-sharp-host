@@ -1,0 +1,25 @@
+# TIER=fake: the fake game server (Host.FakeGame) is the engine image, and the mod
+# init container is skipped (§7.6). Only ever with ASPNETCORE_ENVIRONMENT=Development,
+# which the service's ValidateOnStart enforces. A strategic merge: env entries merge by
+# name, so EngineImage is replaced, not doubled.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../local
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata: { name: descent-service }
+      spec:
+        template:
+          spec:
+            containers:
+              - name: service
+                env:
+                  - { name: DESCENT_Instances__EngineImage, value: "localhost:30500/descent-fake:latest" }
+                  - { name: DESCENT_Instances__SkipModInit, value: "true" }
+                  - { name: DESCENT_Instances__RelayMode, value: "Loopback" }
+                  - { name: DESCENT_Instances__SkipLevelFetch, value: "true" }
+                  - { name: DESCENT_Instances__ExtraEnv__FAKEGAME_ControlAnyAddress, value: "true" }
+                  - { name: DESCENT_MapPool__DefaultPerDepth, value: "0" }

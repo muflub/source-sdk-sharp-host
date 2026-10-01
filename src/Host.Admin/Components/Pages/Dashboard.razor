@@ -1,0 +1,123 @@
+@page "/admin"
+@inherits AdminPage
+@* Live: refreshed every AdminUi:Refresh (polling, not push, in v1). *@
+<h1>Dashboard</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<div class="bar">
+    <label><input type="checkbox" id="fix-sums" @bind="FixSums" /> fix cached Australium sums</label>
+    <button id="run-reconcile" @onclick="() => Run(() => Actions.RunReconcile(FixSums))">Run reconcile</button>
+    <button id="run-backup" @onclick="() => Run(() => Actions.RunBackup())">Run backup</button>
+</div>
+
+<h2>Instances</h2>
+<table id="instances">
+    <tr><th>kind</th><th>state</th><th>count</th></tr>
+    @foreach (var g in ByState)
+    {
+        <tr><td>@g.Kind</td><td>@g.State</td><td>@g.Count</td></tr>
+    }
+</table>
+<p>open sessions: <b id="sessions">@Sessions</b> · items live <b id="live-items">@Totals.Live</b> (minted @Totals.Minted − terminal @Totals.Terminal)</p>
+
+<h2>Pool</h2>
+@if (Pool is null)
+{
+    <p class="note">the map pool is not wired into this service</p>
+}
+else
+{
+    <p id="pool-message">@(Pool.WaitingForRules ? Pool.Message : "ready") · last tick @(Pool.LastTick?.ToString("u") ?? "never")</p>
+    <table id="pool">
+        <tr><th>depth</th><th>pack</th><th>target</th><th>ready</th><th>in flight</th><th>draining</th><th>note</th></tr>
+        @foreach (var d in Pool.Depths)
+        {
+            <tr><td>@d.Depth</td><td>@(d.PackVersion?.ToString() ?? "–")</td><td>@d.Target</td><td>@d.Ready</td><td>@d.InFlight</td><td>@d.Draining</td><td>@d.Note</td></tr>
+        }
+    </table>
+}
+<h2>Library bakes</h2>
+<table id="bakes">
+    <tr><th>job</th><th>key</th><th>state</th><th>finished</th></tr>
+    @foreach (var j in Bakes)
+    {
+        <tr><td>@j.Id</td><td>@j.Key</td><td>@j.State</td><td>@j.Finished?.ToString("u")</td></tr>
+    }
+</table>
+
+<h2>Data</h2>
+<p>database: <span id="db-size">@(Backups is null ? "backups not wired" : $"{Backups.DatabaseBytes:N0} bytes")</span> · last backup:
+    <span id="last-backup">@(LastBackup is { } b ? $"{b.Name} ({Age(b.At, Now)} ago)" : "none")</span></p>
+
+<h2>Reconcile</h2>
+@if (Reconcile is null)
+{
+    <p class="note" id="reconcile">@(Ledger is null ? "the ledger is not wired into this service" : "not run yet")</p>
+}
+else
+{
+    <p id="reconcile">@Reconcile.At.ToString("u"): @Reconcile.Findings.Count finding(s)</p>
+    <table id="findings">
+        <tr><th>kind</th><th>target</th><th>detail</th></tr>
+        @foreach (var f in Reconcile.Findings)
+        {
+            <tr><td>@f.Kind</td><td>@f.Target</td><td>@f.Detail</td></tr>
+        }
+    </table>
+}
+
+<h2>Workers and cluster</h2>
+<table id="health">
+    <tr><th>check</th><th>ok</th><th>detail</th></tr>
+    @foreach (var h in Health)
+    {
+        <tr><td>@h.Name</td><td>@(h.Ok ? "ok" : "FAIL")</td><td>@h.Detail</td></tr>
+    }
+    <tr><td>namespace</td><td></td><td>@Options.Instances.Namespace</td></tr>
+    <tr><td>node pool</td><td></td><td>@(Options.Instances.NodeSelector.Count == 0 ? "any node" : string.Join(", ", Options.Instances.NodeSelector.Select(kv => $"{kv.Key}={kv.Value}")))</td></tr>
+    <tr><td>Kubernetes API</td><td id="api">@(Api.Ok ? "ok" : "FAIL")</td><td>@Api.Detail</td></tr>
+</table>
+
+@code {
+    protected override bool Live => true;
+    bool FixSums;
+    IReadOnlyList<(InstanceKind Kind, InstanceState State, int Count)> ByState = [];
+    int Sessions;
+    (long Minted, long Terminal, long Live) Totals;
+    IReadOnlyList<MapJob> Bakes = [];
+    PoolStatus? Pool;
+    IAdminBackups? Backups;
+    IAdminLedger? Ledger;
+    AdminBackup? LastBackup;
+    AdminReconcileReport? Reconcile;
+    List<HealthItem> Health = [];
+    HealthItem Api = new("api", false, "");
+
+    protected override async Task LoadAsync()
+    {
+        (ByState, Sessions, Totals, Bakes) = await Data.ReadAsync(async (tx, _) =>
+        (
+            (IReadOnlyList<(InstanceKind, InstanceState, int)>)(await tx.Instances.List(take: 100_000))
+                .GroupBy(i => (i.Kind, i.State)).OrderBy(g => g.Key).Select(g => (g.Key.Kind, g.Key.State, g.Count())).ToList(),
+            (await tx.Sessions.Open()).Count,
+            await tx.Items.Totals(),
+            (IReadOnlyList<MapJob>)(await tx.MapJobs.List(take: 500)).Where(j => j.Kind == MapJobKind.Bake).Take(10).ToList()
+        ));
+        Pool = Optional<IMapPool>()?.Status;
+        Backups = Optional<IAdminBackups>();
+        Ledger = Optional<IAdminLedger>();
+        LastBackup = Backups is null ? null : (await Backups.List()).MaxBy(b => b.At);
+        Reconcile = Ledger?.LastReconcile;
+        Health = [];
+        foreach (var r in Services.GetServices<IHealthReporter>())
+        {
+            try { Health.Add(await r.CheckAsync(CancellationToken.None)); }
+            catch (Exception e) { Health.Add(new HealthItem(r.GetType().Name, false, e.Message)); }
+        }
+        if (Optional<IInstanceHost>() is not { } pods) Api = new("api", false, "no pod host wired");
+        else
+        {
+            try { Api = new("api", true, $"{(await pods.List(GamePodLabels.Selector)).Count} game pod(s)"); }
+            catch (Exception e) { Api = new("api", false, e.Message); }
+        }
+    }
+}

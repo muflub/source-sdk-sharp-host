@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <!--
+      .NET 10 ships blazor.web.js as a static web asset (the Microsoft.AspNetCore.App.Internal.Assets
+      pack), which only a Web SDK project with .razor content gets, and only MapStaticAssets serves.
+      The service is neither, so this library pulls the pack, embeds the script, and serves it itself
+      at /_framework/blazor.web.js on the admin listener (AdminHost.MapHostAdmin).
+    -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+    <AdminBlazorScript>$(NuGetPackageRoot)microsoft.aspnetcore.app.internal.assets/$(BundledNETCoreAppPackageVersion)/_framework/blazor.web.js</AdminBlazorScript>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Host.Abstractions/Host.Abstractions.csproj" />
+    <!-- HostData.WriteAsActorAsync: ledger events of an admin action carry the admin actor. -->
+    <ProjectReference Include="../Host.Data/Host.Data.csproj" />
+    <!-- PackCatalog, MapPoolWorker, LevelStorage: the Room packs and Map pool pages drive them directly. -->
+    <ProjectReference Include="../Host.MapPool/Host.MapPool.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(AdminBlazorScript)" LogicalName="admin/blazor.web.js" Condition="Exists('$(AdminBlazorScript)')" />
+  </ItemGroup>
+  <Target Name="RequireAdminBlazorScript" BeforeTargets="PrepareForBuild" Condition="!Exists('$(AdminBlazorScript)')">
+    <Error Text="blazor.web.js not found at '$(AdminBlazorScript)': restore Host.Admin (it pulls Microsoft.AspNetCore.App.Internal.Assets)." />
+  </Target>
+</Project>

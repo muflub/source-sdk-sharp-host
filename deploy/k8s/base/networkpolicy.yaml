@@ -1,0 +1,75 @@
+# Game pods (D-H10, D-H11): one container, the launcher, which runs the engine and serves the
+# relay. The gateway reaches its PeerRelay on TCP 5010 and nothing else; the service may reach
+# any TCP port (devapi proxy, /healthz). No UDP ingress at all: the engine's 27015 is reached
+# by the relay on loopback and never leaves the pod. Egress: the service's game API (5001)
+# and internal maps (5000), and DNS.
+#
+# The kubelet's readiness / liveness probes on :5012 need no rule here: they come from the
+# pod's own node, and NetworkPolicy always admits traffic from the node a pod runs on
+# (Kubernetes NetworkPolicy docs; k3s's embedded kube-router policy controller follows this by
+# accepting traffic from the node's own addresses). A CNI that does not honour that rule
+# would mark every game pod unready, which the manager reports as a boot timeout.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: game-pods
+spec:
+  podSelector:
+    matchLabels: { app: descent-game }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: descent-gateway } }
+      ports:
+        - { protocol: TCP, port: 5010 }
+    - from:
+        - podSelector: { matchLabels: { app: descent-service } }
+      ports:
+        - { protocol: TCP }          # every TCP port; still no UDP
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: descent-service } }
+      ports:
+        - { protocol: TCP, port: 5001 }
+        - { protocol: TCP, port: 5000 }
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# The service's :5000 (internal) accepts connections from the namespace only; the game
+# and gateway APIs from the namespace only; fastdl from anywhere.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: service
+spec:
+  podSelector:
+    matchLabels: { app: descent-service }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 5000 }
+        - { protocol: TCP, port: 5001 }
+        - { protocol: TCP, port: 5002 }
+    - ports:
+        - { protocol: TCP, port: 5004 }
+---
+# The gateway's control port from the service only; UDP from anywhere.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+spec:
+  podSelector:
+    matchLabels: { app: descent-gateway }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: descent-service } }
+      ports:
+        - { protocol: TCP, port: 5003 }
+    - ports:
+        - { protocol: UDP, port: 27015 }
+        - { protocol: TCP, port: 5006 }

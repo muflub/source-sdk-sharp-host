@@ -1,0 +1,113 @@
+@page "/admin/characters"
+@inherits AdminPage
+@* Refreshed on load and after each action. The sheet is decoded by the current rules module's codec (IGameRules.Sheets). *@
+<h1>Characters</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar">
+    <input id="f-name" placeholder="name or account" @bind="Filter" />
+    <label><input type="checkbox" id="f-deleted" @bind="ShowDeleted" /> show deleted</label>
+</div>
+<Pager Skip="Skip" Take="Ui.PageSize" Shown="Rows.Count" Csv="admin/export/characters.csv" OnPage="Page" />
+<table id="characters">
+    <tr><th>name</th><th>account</th><th>class</th><th>level</th><th>xp</th><th>depth</th><th>Australium</th><th>flags</th><th></th></tr>
+    @foreach (var c in Shown)
+    {
+        <tr class="@(c.Id == Id ? "sel" : "")">
+            <td>@c.Name</td><td>@c.Account</td><td>@c.ClassName</td><td>@c.Level</td><td>@c.Xp</td><td>@c.ReachedDepth</td><td>@c.Australium</td>
+            <td>@(c.Hardcore ? "HC " : "")@(c.Fallen ? "fallen " : "")@(c.Deleted ? "deleted" : "")</td>
+            <td><button class="open" @onclick="() => Open(c.Id)">open</button></td>
+        </tr>
+    }
+</table>
+
+@if (Selected is { } s)
+{
+    <h2 id="detail">@s.Name <span class="note">@s.Id · version @s.Version</span></h2>
+    <p>lease: <b id="lease">@(Lease is null ? "none" : $"{Lease.InstanceId} until {Lease.Expires:u}")</b> · party: <span id="party">@(Party?.Id ?? "none")</span></p>
+    <div class="bar">
+        @if (Lease is not null)
+        {
+            <button id="release-lease" @onclick="() => Run(() => Actions.ReleaseLease(s.Id))">Release lease</button>
+            <button id="kick" @onclick="() => Run(() => Actions.KickAndRelease(s.Id))">Kick and release</button>
+        }
+        <button id="fallen" @onclick="() => AskFallen(s)">@(s.Fallen ? "Unfallen" : "Mark fallen")</button>
+        <button id="delete" @onclick="() => AskDelete(s)">Delete</button>
+    </div>
+    <div class="bar">
+        <input id="grant-amount" type="number" @bind="Grant" />
+        <input id="grant-reason" placeholder="reason" @bind="GrantReason" />
+        <button id="grant" @onclick="() => Run(() => Actions.GrantAustralium(s.Id, Grant, GrantReason ?? string.Empty))">Grant Australium</button>
+    </div>
+    @if (SheetError is not null)
+    {
+        <p class="refused">@SheetError</p>
+    }
+    else
+    {
+        <h2>Sheet</h2>
+        <textarea id="sheet" @bind="SheetText"></textarea>
+        <div class="bar"><button id="save-sheet" @onclick="() => AskEdit(s)">Save sheet</button> <span class="note">validated by the rules (ValidateCheckpoint)</span></div>
+    }
+    <h2>Australium ledger</h2>
+    <table id="ledger">
+        <tr><th>at</th><th>delta</th><th>reason</th><th>ref</th></tr>
+        @foreach (var e in Ledger)
+        {
+            <tr><td>@e.At.ToString("u")</td><td>@e.Delta</td><td>@e.Reason</td><td>@e.Ref</td></tr>
+        }
+    </table>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "id")] public string? Id { get; set; }
+    string? Filter, GrantReason, SheetText, SheetOriginal, SheetError;
+    bool ShowDeleted;
+    long Grant;
+    int Skip;
+    IReadOnlyList<CharacterRecord> Rows = [];
+    CharacterRecord? Selected;
+    Lease? Lease;
+    Party? Party;
+    IReadOnlyList<AustraliumEntry> Ledger = [];
+
+    IEnumerable<CharacterRecord> Shown => Rows.Where(c => (ShowDeleted || !c.Deleted) &&
+        (string.IsNullOrWhiteSpace(Filter) || c.Name.Contains(Filter.Trim(), StringComparison.OrdinalIgnoreCase) || c.Account.StartsWith(Filter.Trim(), StringComparison.Ordinal)));
+
+    protected override async Task LoadAsync()
+    {
+        (Rows, Selected, Lease, Party, Ledger) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var rows = await tx.Characters.ListAll(Skip, Ui.PageSize);
+            if (Id is null) return (rows, (CharacterRecord?)null, (Lease?)null, (Party?)null, (IReadOnlyList<AustraliumEntry>)[]);
+            return (rows, await tx.Characters.Get(Id), await tx.Leases.Get(Id), await tx.Parties.ForCharacter(Id), await tx.Characters.AustraliumLedger(Id));
+        });
+        SheetError = null;
+        if (Selected is null) return;
+        var rules = Optional<IRulesProvider>()?.Current;
+        if (rules is null) { SheetError = PoolStatus.WaitingForRulesMessage + ": the sheet cannot be decoded"; return; }
+        try { SheetOriginal = rules.Sheets.ToJson(new(Selected.Sheet, Selected.SheetVersion)); }
+        catch (Exception e) when (e is InvalidDataException or JsonException) { SheetError = $"the rules cannot decode this sheet: {e.Message}"; return; }
+        SheetText ??= SheetOriginal;
+    }
+
+    Task Open(string id) { Id = id; SheetText = null; Last = null; return Reload(); }
+
+    void AskEdit(CharacterRecord c) =>
+        Ask($"Edit {c.Name}'s sheet", Pretty(SheetOriginal), Pretty(SheetText), () => Actions.EditCharacter(c.Id, c.Version, SheetText ?? ""));
+
+    void AskFallen(CharacterRecord c) =>
+        Ask($"{(c.Fallen ? "Unfallen" : "Mark fallen")} {c.Name}", new { c.Fallen }, new { Fallen = !c.Fallen }, () => Actions.SetFallen(c.Id, !c.Fallen));
+
+    void AskDelete(CharacterRecord c) =>
+        Ask($"Delete {c.Name}", new { c.Name, c.Level, c.Deleted }, new { c.Name, c.Level, Deleted = true }, () => Actions.DeleteCharacter(c.Id));
+
+    static string Pretty(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try { return JsonSerializer.Serialize(JsonDocument.Parse(json).RootElement, new JsonSerializerOptions { WriteIndented = true }); }
+        catch (JsonException) { return json; }
+    }
+
+    Task Page(int skip) { Skip = skip; return Reload(); }
+}

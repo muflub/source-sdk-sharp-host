@@ -1,0 +1,38 @@
+@page "/admin/backups"
+@inherits AdminPage
+@* Refreshed on load and after each action. *@
+<h1>Backups</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+@if (Store is null && Loaded)
+{
+    <p class="note" id="not-wired">backups are not wired into this service</p>
+}
+else if (Store is not null)
+{
+    <p>database <span id="db-size">@Store.DatabaseBytes.ToString("N0")</span> bytes</p>
+    <div class="bar"><button id="run-backup" @onclick="() => Run(() => Actions.RunBackup())">Run now</button></div>
+    <table id="backups">
+        <tr><th>name</th><th>kind</th><th>bytes</th><th>age</th><th></th></tr>
+        @foreach (var b in Rows)
+        {
+            <tr id="backup-@b.Name">
+                <td>@b.Name</td><td>@b.Kind</td><td>@b.Bytes.ToString("N0")</td><td>@Age(b.At, Now)</td>
+                <td>
+                    <a class="download" href="admin/backups/@Uri.EscapeDataString(b.Name)">download</a>
+                    <button class="restore" @onclick="() => Run(() => Actions.RestoreBackupToFile(b.Name))">Restore to file</button>
+                </td>
+            </tr>
+        }
+    </table>
+}
+
+@code {
+    IAdminBackups? Store;
+    IReadOnlyList<AdminBackup> Rows = [];
+
+    protected override async Task LoadAsync()
+    {
+        Store = Optional<IAdminBackups>();
+        Rows = Store is null ? [] : (await Store.List()).OrderByDescending(b => b.At).ToList();
+    }
+}

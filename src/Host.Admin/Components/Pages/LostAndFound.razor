@@ -1,0 +1,37 @@
+@page "/admin/lost-and-found"
+@inherits AdminPage
+@* Refreshed on load and after each action. *@
+<h1>Lost &amp; Found</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar"><input id="f-character" placeholder="character id" @bind="Character" /></div>
+<Pager Skip="Skip" Take="Ui.PageSize" Shown="Rows.Count" Csv="admin/export/lost-and-found.csv" OnPage="Page" />
+<table id="lost">
+    <tr><th>id</th><th>character</th><th>item</th><th>fee</th><th>origin</th><th>age</th><th></th></tr>
+    @foreach (var e in Shown)
+    {
+        <tr id="lf-@e.Id">
+            <td>@e.Id</td><td><a href="admin/characters?id=@e.CharacterId">@e.CharacterId</a></td><td><a href="admin/items?id=@e.ItemId">@e.ItemId</a></td>
+            <td>@e.Fee</td><td>@e.OriginInstance</td><td>@Age(e.Since, Now)</td>
+            <td>
+                <button class="waive" @onclick="() => Run(() => Actions.WaiveFee(e.Id))" disabled="@(e.Fee == 0)">Waive fee</button>
+                <button class="release" @onclick="() => Run(() => Actions.ReleaseToStash(e.Id))">Release to stash</button>
+                <button class="delete" @onclick="() => AskDelete(e)">Delete</button>
+            </td>
+        </tr>
+    }
+</table>
+
+@code {
+    string? Character;
+    int Skip;
+    IReadOnlyList<LostAndFoundRecord> Rows = [];
+    IEnumerable<LostAndFoundRecord> Shown => Rows.Where(e => string.IsNullOrWhiteSpace(Character) || e.CharacterId == Character.Trim());
+
+    protected override async Task LoadAsync() => Rows = await Data.ReadAsync((tx, _) => tx.LostAndFound.All(Skip, Ui.PageSize));
+
+    void AskDelete(LostAndFoundRecord e) => Ask($"Delete Lost & Found entry {e.Id}: the item is destroyed",
+        new { e.ItemId, e.Fee, Item = "Live" }, new { Item = "Destroyed" }, () => Actions.DeleteLostAndFound(e.Id));
+
+    Task Page(int skip) { Skip = skip; return Reload(); }
+}

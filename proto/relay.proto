@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package descent.relay.v1;
+
+option csharp_namespace = "SourceSharp.Host.Proto.Relay";
+
+// Gateway <-> game pod transport (user-ruled 2026-09-30; replaces plan §8.1's
+// backend-facing UDP sockets and §8.1a's allocators in the gateway). Every game
+// pod runs a sidecar (Host.Sidecar) that hosts both services. docs/net-protocol.md
+// §11 says why: each player reaches the engine from its own loopback address.
+
+// Gateway -> sidecar on :5010 (h2c), ONE STREAM PER CLIENT SESSION. The first
+// RelayUp is Open; every later one a Datagram. The sidecar answers Opened with the
+// peer the engine will see, then relays datagrams both ways, payload-agnostic.
+// Either side ends the stream to close the session; Closed may precede the end.
+service PeerRelay {
+  rpc Relay(stream RelayUp) returns (stream RelayDown);
+}
+
+message RelayUp {
+  oneof kind {
+    Open open = 1;
+    Datagram datagram = 2;
+  }
+}
+
+message Open {
+  string session_id = 1;
+  string client_addr = 2;   // ip:port the client sends from (the real address)
+  string steamid = 3;       // empty until the service knows it
+  uint64 table_version = 4;
+  // A peer this session had before (a restarted gateway's SyncTable): honoured when
+  // it is free for this session or this SteamID, ignored otherwise.
+  string peer_hint = 5;
+}
+
+message Datagram {
+  bytes payload = 1;
+}
+
+message RelayDown {
+  oneof kind {
+    Opened opened = 1;
+    Datagram datagram = 2;
+    Closed closed = 3;
+  }
+}
+
+message Opened {
+  string peer = 1;          // the loopback ip:port the engine sees for this session
+}
+
+message Closed {
+  string reason = 1;        // "superseded", "idle", "shutdown"
+}
+
+// Game server -> sidecar on 127.0.0.1:5011, loopback only: who is behind a peer.
+// Replaces ResolvePeer against the service for the address question.
+service PeerInfo {
+  rpc Resolve(ResolveRequest) returns (PeerEntry);
+  rpc List(ListRequest) returns (PeerList);
+}
+
+message ResolveRequest {
+  string peer = 1;          // ip:port as INetChannelInfo::GetAddress reports it; port 0 = any
+}
+
+message PeerEntry {
+  bool found = 1;
+  string peer = 2;
+  string client_addr = 3;
+  string session_id = 4;
+  string steamid = 5;
+  int64 opened_unix_ms = 6;
+}
+
+message ListRequest {}
+
+message PeerList {
+  repeated PeerEntry peers = 1;
+}

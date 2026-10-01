@@ -1,0 +1,52 @@
+@page "/admin/trades"
+@inherits AdminPage
+@* Refreshed on load and after each action. *@
+<h1>Trades</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar">
+    <select id="f-state" @bind="StateText"><option value="">any state</option>@foreach (var s in Enum.GetNames<TradeStatus>()) { <option value="@s">@s</option> }</select>
+</div>
+<Pager Skip="Skip" Take="Ui.PageSize" Shown="Rows.Count" Csv="admin/export/trades.csv" OnPage="Page" />
+<table id="trades">
+    <tr><th>id</th><th>hub</th><th>a</th><th>b</th><th>state</th><th>offer a</th><th>offer b</th><th>Australium</th><th>escrow</th><th></th></tr>
+    @foreach (var t in Shown)
+    {
+        <tr id="trade-@t.Id">
+            <td>@t.Id</td><td>@t.HubInstance</td><td>@t.A @(t.LockedA ? "(locked)" : "")</td><td>@t.B @(t.LockedB ? "(locked)" : "")</td><td>@t.State</td>
+            <td>@string.Join(" ", t.OfferA)</td><td>@string.Join(" ", t.OfferB)</td><td>@t.AustraliumA / @t.AustraliumB</td>
+            <td>@string.Join(" ", Escrow.GetValueOrDefault(t.Id, []).Select(i => $"{i.BaseType}:{i.Id}"))</td>
+            <td>
+                @if (t.State is TradeStatus.Open or TradeStatus.Locked)
+                {
+                    <button class="cancel" @onclick="() => AskCancel(t)">Cancel</button>
+                }
+            </td>
+        </tr>
+    }
+</table>
+
+@code {
+    string? StateText;
+    int Skip;
+    IReadOnlyList<TradeRecord> Rows = [];
+    Dictionary<string, IReadOnlyList<ItemRecord>> Escrow = [];
+
+    IEnumerable<TradeRecord> Shown => Rows.Where(t => string.IsNullOrEmpty(StateText) || t.State.ToString() == StateText);
+
+    protected override async Task LoadAsync() =>
+        (Rows, Escrow) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var rows = await tx.Trades.All(Skip, Ui.PageSize);
+            var escrow = new Dictionary<string, IReadOnlyList<ItemRecord>>();
+            foreach (var t in rows.Where(t => t.State is TradeStatus.Open or TradeStatus.Locked))
+                escrow[t.Id] = await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.TradeEscrow, OwnerId: t.Id, Take: 1000));
+            return (rows, escrow);
+        });
+
+    void AskCancel(TradeRecord t) => Ask($"Cancel trade {t.Id}; the escrow goes back to the offerers",
+        new { t.State, Escrow = Escrow.GetValueOrDefault(t.Id, []).Select(i => i.Id) }, new { State = TradeStatus.Cancelled, Escrow = Array.Empty<string>() },
+        () => Actions.CancelTrade(t.Id));
+
+    Task Page(int skip) { Skip = skip; return Reload(); }
+}

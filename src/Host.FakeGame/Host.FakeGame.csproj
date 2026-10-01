@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- The fake game server (plan §7.6): an exe (the TIER=fake engine image) and a hostable library
+       (FakeGameHost, for in-process facts). Written on Host.Sdk and never on Host.Proto (a fact in
+       Host.Sdk.Tests reads this file); the relay comes from Host.Relay as the launcher's does. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Host.Sdk/Host.Sdk.csproj" />
+    <ProjectReference Include="../Host.FakeClient/Host.FakeClient.csproj" />
+    <ProjectReference Include="../Host.Relay/Host.Relay.csproj" />
+    <ProjectReference Include="../Host.FakeRules/Host.FakeRules.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Protobuf Include="fakegame.proto" GrpcServices="Both" />
+  </ItemGroup>
+</Project>

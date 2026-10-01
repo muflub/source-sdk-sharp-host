@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Dev only (D-H13): the host inside the game process. The SDK's `-hostlocal inproc` loads this
+    assembly by name at run time; Host.Sdk never references it. Never part of a production image.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../Descent.Service/Descent.Service.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

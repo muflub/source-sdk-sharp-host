@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Descent.Service/Descent.Service.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+    <ProjectReference Include="../Host.Local/Host.Local.csproj" />
+    <!-- End to end (§7.6, §10): fake game pods, the real gateway, toy clients. -->
+    <ProjectReference Include="../Host.FakeGame/Host.FakeGame.csproj" />
+    <ProjectReference Include="../Host.Gateway/Host.Gateway.csproj" />
+    <ProjectReference Include="../Host.FakeClient/Host.FakeClient.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <!-- A real rules module for the D-H9 handshake through the API; loaded only through the registry. -->
+  <ItemGroup>
+    <ProjectReference Include="../../tests/fixtures/ModuleFixture.NeverDrop/ModuleFixture.NeverDrop.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyModuleFixture" AfterTargets="Build">
+    <MSBuild Projects="../../tests/fixtures/ModuleFixture.NeverDrop/ModuleFixture.NeverDrop.csproj" Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" ItemName="_NeverDrop" />
+    </MSBuild>
+    <Copy SourceFiles="@(_NeverDrop)" DestinationFolder="$(OutDir)module-fixtures/" SkipUnchangedFiles="false" />
+  </Target>
+</Project>

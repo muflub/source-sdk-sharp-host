@@ -1,0 +1,9 @@
+/* Interpose mode (Interpose.cs): the engine libraries reference recvfrom@GLIBC_2.2.5 and
+   sendto@GLIBC_2.2.5 (objdump -T of engine_srv.so and libtier0_srv.so). The dynamic loader binds
+   a versioned reference only to a definition of the same version name, so the launcher's exports
+   carry that version; being first in the global scope, they win over libc's. */
+GLIBC_2.2.5 {
+  global:
+    recvfrom;
+    sendto;
+};

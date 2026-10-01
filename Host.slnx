@@ -1,0 +1,43 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Descent.MapForge/Descent.MapForge.csproj" />
+    <Project Path="src/Descent.Service/Descent.Service.csproj" />
+    <Project Path="src/Host.Abstractions/Host.Abstractions.csproj" />
+    <Project Path="src/Host.Admin/Host.Admin.csproj" />
+    <Project Path="src/Host.Contracts/Host.Contracts.csproj" />
+    <Project Path="src/Host.Data/Host.Data.csproj" />
+    <Project Path="src/Host.FakeClient/Host.FakeClient.csproj" />
+    <Project Path="src/Host.FakeGame/Host.FakeGame.csproj" />
+    <Project Path="src/Host.Gateway/Host.Gateway.csproj" />
+    <Project Path="src/Host.Instances/Host.Instances.csproj" />
+    <Project Path="src/Host.LiveDriver/Host.LiveDriver.csproj" />
+    <Project Path="src/Host.Local/Host.Local.csproj" />
+    <Project Path="src/Host.Launcher/Host.Launcher.csproj" />
+    <Project Path="src/Host.MapPool/Host.MapPool.csproj" />
+    <Project Path="src/Host.Modules/Host.Modules.csproj" />
+    <Project Path="src/Host.Proto/Host.Proto.csproj" />
+    <Project Path="src/Host.FakeRules/Host.FakeRules.csproj" />
+    <Project Path="src/Host.Sdk/Host.Sdk.csproj" />
+    <Project Path="src/Host.Relay/Host.Relay.csproj" />
+    <Project Path="src/Host.Testing/Host.Testing.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="src/Descent.MapForge.Tests/Descent.MapForge.Tests.csproj" />
+    <Project Path="src/Descent.Service.Tests/Descent.Service.Tests.csproj" />
+    <Project Path="src/Host.Admin.Tests/Host.Admin.Tests.csproj" />
+    <Project Path="src/Host.Data.Tests/Host.Data.Tests.csproj" />
+    <Project Path="src/Host.Gateway.Tests/Host.Gateway.Tests.csproj" />
+    <Project Path="src/Host.Instances.Tests/Host.Instances.Tests.csproj" />
+    <Project Path="src/Host.Launcher.Tests/Host.Launcher.Tests.csproj" />
+    <Project Path="src/Host.MapPool.Tests/Host.MapPool.Tests.csproj" />
+    <Project Path="src/Host.Modules.Tests/Host.Modules.Tests.csproj" />
+    <Project Path="src/Host.Sdk.Tests/Host.Sdk.Tests.csproj" />
+    <Project Path="src/Host.Relay.Tests/Host.Relay.Tests.csproj" />
+    <Project Path="src/Host.Tests/Host.Tests.csproj" />
+  </Folder>
+  <Folder Name="/fixtures/">
+    <Project Path="tests/fixtures/ModuleFixture.AlwaysDrop/ModuleFixture.AlwaysDrop.csproj" />
+    <Project Path="tests/fixtures/ModuleFixture.Dep/ModuleFixture.Dep.csproj" />
+    <Project Path="tests/fixtures/ModuleFixture.NeverDrop/ModuleFixture.NeverDrop.csproj" />
+  </Folder>
+</Solution>

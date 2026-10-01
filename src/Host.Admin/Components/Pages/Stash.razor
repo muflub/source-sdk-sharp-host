@@ -1,0 +1,76 @@
+@page "/admin/stash"
+@inherits AdminPage
+@* Refreshed on load and after each action. Stash owner ids and capacity come from the ledger (IAdminLedger). *@
+<h1>Stash</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+@if (Optional<IAdminLedger>() is null)
+{
+    <p class="note" id="not-wired">the ledger is not wired into this service: stashes cannot be addressed</p>
+}
+else
+{
+    <h2>Stashes</h2>
+    <table id="stashes">
+        <tr><th>account</th><th>ladder</th><th>items</th><th>capacity</th><th>flag</th><th></th></tr>
+        @foreach (var s in All)
+        {
+            <tr>
+                <td>@s.Account</td><td>@(s.Hardcore ? "hardcore" : "softcore")</td><td>@s.Count</td><td>@s.Capacity</td>
+                <td>@(s.Count > s.Capacity || s.MaxSlot >= s.Capacity ? "overflow: withdraw-only" : "")</td>
+                <td><button class="open" @onclick="() => Open(s.Account, s.Hardcore)">open</button></td>
+            </tr>
+        }
+    </table>
+    @if (Account is not null)
+    {
+        <h2 id="detail">@Account @(Hardcore ? "hardcore" : "softcore") <span class="note">@Items.Count / @Capacity</span></h2>
+        <table id="stash">
+            <tr><th>slot</th><th>id</th><th>base</th><th>rarity</th><th>ilvl</th><th></th></tr>
+            @foreach (var i in Items.OrderBy(i => i.Slot))
+            {
+                <tr>
+                    <td>@i.Slot</td><td><a href="admin/items?id=@i.Id">@i.Id</a></td><td>@i.BaseType</td><td>@i.Rarity</td><td>@i.ItemLevel</td>
+                    <td>
+                        <input class="slot-in" type="number" @bind="MoveTo" style="width:5em" />
+                        <button class="move" @onclick="() => AskMove(i)">Move</button>
+                        <button class="remove" @onclick="() => AskRemove(i)">Remove</button>
+                    </td>
+                </tr>
+            }
+        </table>
+    }
+}
+
+@code {
+    sealed record StashRow(string Account, bool Hardcore, int Count, int MaxSlot, int Capacity);
+    [SupplyParameterFromQuery(Name = "account")] public string? Account { get; set; }
+    [SupplyParameterFromQuery(Name = "hc")] public bool Hardcore { get; set; }
+    int MoveTo;
+    int Capacity;
+    IAdminLedger? Ledger;
+    IReadOnlyList<StashRow> All = [];
+    IReadOnlyList<ItemRecord> Items = [];
+
+    protected override async Task LoadAsync()
+    {
+        Ledger = Optional<IAdminLedger>();
+        if (Ledger is not { } ledger) return;
+        (All, Items, Capacity) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var rows = new List<StashRow>();
+            foreach (var g in (await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Stash, Take: 100_000))).GroupBy(i => i.OwnerId).OrderBy(g => g.Key))
+                if (ledger.ParseStashOwner(g.Key) is { } s)
+                    rows.Add(new StashRow(s.Account, s.Hardcore, g.Count(), g.Max(i => i.Slot), await ledger.StashCapacity(tx, s.Account, s.Hardcore)));
+            if (Account is null) return ((IReadOnlyList<StashRow>)rows, (IReadOnlyList<ItemRecord>)[], 0);
+            var owner = ledger.StashOwner(Account, Hardcore);
+            return (rows, await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Stash, OwnerId: owner, Take: 10_000)), await ledger.StashCapacity(tx, Account, Hardcore));
+        });
+    }
+
+    Task Open(string account, bool hardcore) { Account = account; Hardcore = hardcore; Last = null; return Reload(); }
+
+    void AskMove(ItemRecord i) => Ask($"Move {i.Id} within the stash", new { i.Slot }, new { Slot = MoveTo }, () => Actions.StashMove(i.Id, MoveTo));
+    void AskRemove(ItemRecord i) => Ask($"Remove {i.Id} from the stash", new { i.OwnerKind, i.OwnerId, i.Slot }, new { OwnerKind = OwnerKind.Admin },
+        () => Actions.StashRemove(i.Id));
+}

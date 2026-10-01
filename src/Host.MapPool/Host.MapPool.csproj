@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Abstractions/Host.Abstractions.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- bzip2 for the fastdl copy of a BSP (Q18); managed, no native code. -->
+    <PackageReference Include="SharpZipLib" />
+  </ItemGroup>
+</Project>

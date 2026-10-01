@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A fixture rules module (plan §1.2), the other half of the pair: built against
+    Host.Contracts and loaded by Host.Modules.Tests only through the registry.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Host.Contracts/Host.Contracts.csproj" Private="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../ModuleFixture.Shared/FixtureRulesBase.cs" Link="FixtureRulesBase.cs" />
+  </ItemGroup>
+</Project>

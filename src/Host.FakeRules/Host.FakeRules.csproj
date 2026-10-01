@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The fake game's rules module (plan §7.6, D-H9): Host.FakeGame announces this assembly at
+       Booting and the service loads it by hash, as it will load Descent.Rules. It references
+       Host.Contracts only, like a real rules module. The type keeps its old namespace
+       (SourceSharp.Host.Testing) so every fact written against it compiles unchanged. -->
+  <ItemGroup>
+    <ProjectReference Include="../Host.Contracts/Host.Contracts.csproj" />
+  </ItemGroup>
+</Project>

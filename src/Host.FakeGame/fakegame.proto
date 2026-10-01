@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package descent.fakegame.v1;
+
+option csharp_namespace = "SourceSharp.Host.FakeGame.Control";
+
+// The fake game server's control surface (plan §7.6): mirrors the descent_* dev commands, so a
+// fact or a live script drives the fake the way it will drive the engine. It lives with the fake,
+// never in Host.Proto: the game API is the SDK's business, this is the test harness's.
+// Every call runs on the fake's main thread (inside its Pump loop), as game code would.
+service FakeGameControl {
+  rpc Status(Empty) returns (StatusReply);
+  // A player joins without UDP (facts): PlayerJoined through the SDK with a synthetic peer.
+  rpc Join(JoinRequest) returns (PlayerReply);
+  rpc Leave(PlayerRequest) returns (Reply);
+  rpc Player(PlayerRequest) returns (PlayerReply);
+  // A robot dies at the player's hands: the kill roll, then the reserve (NextForTier + Reveal),
+  // the MintDrops fallback when the tier is empty, or the boss table (boss = true).
+  rpc Kill(KillRequest) returns (KillReply);
+  rpc Pickup(ItemRequest) returns (ItemsReply);
+  rpc Die(PlayerRequest) returns (ItemsReply);
+  rpc Backpack(PlayerRequest) returns (ItemsReply);
+  // The party of the first member, with every other member invited and accepted (all leased here).
+  rpc Party(PartyRequest) returns (PartyReply);
+  // RequestDescent from the hub, StairsDown from a level (depth = the target).
+  rpc Descend(TravelRequest) returns (TravelReply);
+  rpc TownPortal(TravelRequest) returns (TravelReply);
+  rpc ReturnThroughPortal(TravelRequest) returns (TravelReply);
+  rpc Reclaim(ItemRequest) returns (ItemsReply);
+  rpc LostAndFound(PlayerRequest) returns (ItemsReply);
+  // Faults: exit with a code, stop the main loop (the SDK then stops heartbeating), answer slowly.
+  rpc Crash(CrashRequest) returns (Reply);
+  rpc Hang(Empty) returns (Reply);
+  rpc Slow(SlowRequest) returns (Reply);
+}
+
+message Empty {}
+
+message Reply {
+  bool ok = 1;
+  string reason = 2;
+}
+
+message StatusReply {
+  string instance_id = 1;
+  string kind = 2;             // "hub" | "level", once booted
+  bool booted = 3;
+  bool map_ready = 4;
+  int32 depth = 5;
+  string level_hash = 6;
+  uint64 instance_seed = 7;
+  string module_sha256 = 8;    // what Booting announced
+  bool module_uploaded = 9;
+  repeated string players = 10; // steamids
+  repeated string events = 11;  // commands and notable steps, in order ("prepare_hop 7656 lvl-2", "hop_ready ...")
+  bool draining = 12;
+  bool connected = 13;
+}
+
+message JoinRequest {
+  string steamid = 1;
+  string name = 2;
+}
+
+message PlayerRequest { string steamid = 1; }
+
+message PlayerReply {
+  bool ok = 1;
+  string reason = 2;
+  string steamid = 3;
+  string character_id = 4;
+  string peer = 5;
+  bool leased = 6;
+  string client_addr = 7;
+}
+
+message KillRequest {
+  string steamid = 1;
+  string robot = 2;
+  bool boss = 3;
+}
+
+message KillReply {
+  bool ok = 1;
+  string reason = 2;
+  bool dropped = 3;
+  int32 tier = 4;
+  string source = 5;           // "reserve" | "fallback" | "boss" | "none"
+  repeated string item_ids = 6;
+  uint32 kill_seq = 7;
+}
+
+message ItemRequest {
+  string steamid = 1;
+  string item_id = 2;          // Reclaim: the Lost & Found entry id
+}
+
+message ItemsReply {
+  bool ok = 1;
+  string reason = 2;
+  repeated string item_ids = 3;
+}
+
+message PartyRequest { repeated string steamids = 1; }
+
+message PartyReply {
+  bool ok = 1;
+  string reason = 2;
+  string party_id = 3;
+}
+
+message TravelRequest {
+  string steamid = 1;
+  int32 depth = 2;
+  string party_id = 3;
+}
+
+message TravelReply {
+  bool ok = 1;
+  string reason = 2;
+  string state = 3;            // "started" | "waiting" | "refused"
+  string instance_id = 4;
+}
+
+message CrashRequest { int32 exit_code = 1; }
+message SlowRequest { int32 ms = 1; }

@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A private dependency of the AlwaysDrop fixture rules module (Host.Modules.Tests). -->
+</Project>

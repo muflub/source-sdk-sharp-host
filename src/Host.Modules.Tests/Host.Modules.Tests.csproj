@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Modules/Host.Modules.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+  </ItemGroup>
+
+  <!--
+    The fixture rules modules (plan §1.2). Built with the tests but never referenced as
+    assemblies: the facts load them only through the registry, from bytes they upload, so
+    their types must not be in the test's own load context.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../tests/fixtures/ModuleFixture.AlwaysDrop/ModuleFixture.AlwaysDrop.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../tests/fixtures/ModuleFixture.NeverDrop/ModuleFixture.NeverDrop.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="CopyModuleFixtures" AfterTargets="Build">
+    <!-- Ask each fixture where it built, rather than guessing its output path. -->
+    <MSBuild Projects="@(ProjectReference)" Condition="'%(ProjectReference.ReferenceOutputAssembly)' == 'false'"
+             Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" ItemName="_ModuleFixtureMain" />
+    </MSBuild>
+    <ItemGroup>
+      <_ModuleFixture Include="%(_ModuleFixtureMain.RootDir)%(_ModuleFixtureMain.Directory)ModuleFixture.*.dll" Dir="%(_ModuleFixtureMain.Filename)" />
+    </ItemGroup>
+    <Error Condition="'@(_ModuleFixture)' == ''" Text="the fixture rules modules were not built" />
+    <Copy SourceFiles="@(_ModuleFixture)" DestinationFolder="$(OutDir)module-fixtures/%(Dir)/" SkipUnchangedFiles="false" />
+  </Target>
+</Project>

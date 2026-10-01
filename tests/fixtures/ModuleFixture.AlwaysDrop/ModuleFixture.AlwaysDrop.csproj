@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A fixture rules module (plan §1.2): built against Host.Contracts like the mod's own
+    rules module, and loaded by Host.Modules.Tests only through the registry, never as a
+    reference. Host.Contracts is not copied: the host's copy is the one that binds.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Host.Contracts/Host.Contracts.csproj" Private="false" />
+    <ProjectReference Include="../ModuleFixture.Dep/ModuleFixture.Dep.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../ModuleFixture.Shared/FixtureRulesBase.cs" Link="FixtureRulesBase.cs" />
+  </ItemGroup>
+</Project>

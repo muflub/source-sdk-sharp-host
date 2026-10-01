@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The D-H10 relay as a library (D-H11): hosted by Host.Launcher in every game pod, by the
+       fake game in the fake tier, and by facts. AOT-compatible: the launcher is NativeAOT. -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Host.Proto/Host.Proto.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" />
+    <PackageReference Include="prometheus-net.AspNetCore" />
+  </ItemGroup>
+</Project>

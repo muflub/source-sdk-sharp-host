@@ -1,0 +1,51 @@
+@page "/admin/modules"
+@inherits AdminPage
+@* Refreshed on load and after each action. *@
+<h1>Rules modules</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<p class="note">current: <span id="current">@(Optional<IRulesProvider>()?.CurrentSha256 ?? "none yet")</span></p>
+<Pager Skip="0" Take="int.MaxValue" Shown="Rows.Count" Csv="admin/export/modules.csv" />
+<table id="modules">
+    <tr><th>sha256</th><th>assembly</th><th>version</th><th>contract</th><th>first seen</th><th>from</th><th>bytes</th><th>instances</th><th>levels</th><th>state</th><th></th></tr>
+    @foreach (var m in Rows)
+    {
+        <tr id="module-@m.Sha256">
+            <td title="@m.Sha256">@Short(m.Sha256, 16)</td><td>@m.Assembly</td><td>@m.Version</td><td>@m.ContractVersion</td><td>@m.FirstSeen.ToString("u")</td>
+            <td>@m.FirstInstance</td><td>@m.Bytes.ToString("N0")</td>
+            <td>@string.Join(" ", Running.GetValueOrDefault(m.Sha256, []))</td><td>@LevelCount.GetValueOrDefault(m.Sha256)</td><td>@m.State</td>
+            <td>
+                @if (m.State != ModuleState.Approved) { <button class="approve" @onclick="() => Run(() => Actions.ApproveModule(m.Sha256))">Approve</button> }
+                @if (m.State != ModuleState.Quarantined)
+                {
+                    <button class="quarantine" @onclick="() => AskQuarantine(m)">Quarantine</button>
+                }
+                <button class="delete" disabled="@(Running.GetValueOrDefault(m.Sha256, []).Count > 0 || LevelCount.GetValueOrDefault(m.Sha256) > 0)"
+                        @onclick="() => AskDelete(m)">Delete</button>
+            </td>
+        </tr>
+    }
+</table>
+
+@code {
+    IReadOnlyList<RulesModuleRecord> Rows = [];
+    Dictionary<string, List<string>> Running = [];
+    Dictionary<string, int> LevelCount = [];
+
+    void AskQuarantine(RulesModuleRecord m) => Ask($"Quarantine {Short(m.Sha256, 16)}: its uploads are refused and its {Running.GetValueOrDefault(m.Sha256, []).Count} instance(s) drain",
+        new { m.State }, new { State = ModuleState.Quarantined }, () => Actions.QuarantineModule(m.Sha256));
+    void AskDelete(RulesModuleRecord m) => Ask($"Delete module {Short(m.Sha256, 16)}", new { m.State, m.Bytes }, null, () => Actions.DeleteModule(m.Sha256));
+
+    protected override async Task LoadAsync() =>
+        (Rows, Running, LevelCount) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var rows = await tx.Modules.List();
+            var running = (await tx.Instances.NonTerminal()).Where(i => i.RulesSha256 is not null)
+                .GroupBy(i => i.RulesSha256!).ToDictionary(g => g.Key, g => g.Select(i => i.Id).ToList());
+            var levels = new Dictionary<string, int>();
+            foreach (var s in new[] { LevelState.Ready, LevelState.HandedOut })
+                foreach (var l in await tx.Levels.List(state: s, take: 100_000))
+                    if (l.RulesSha256 is { } sha) levels[sha] = levels.GetValueOrDefault(sha) + 1;
+            return (rows, running, levels);
+        });
+}

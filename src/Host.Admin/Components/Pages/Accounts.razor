@@ -1,0 +1,61 @@
+@page "/admin/accounts"
+@inherits AdminPage
+@* Refreshed on load and after each action. *@
+<h1>Accounts</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar">
+    <input id="f-steamid" placeholder="SteamID starts with" @bind="Filter" />
+    <label><input type="checkbox" id="f-banned" @bind="BannedOnly" /> banned only</label>
+</div>
+<Pager Skip="Skip" Take="Ui.PageSize" Shown="Rows.Count" Csv="admin/export/accounts.csv" OnPage="Page" />
+<table id="accounts">
+    <tr><th>SteamID</th><th>created</th><th>characters</th><th>banned</th><th>note</th><th></th></tr>
+    @foreach (var a in Shown)
+    {
+        <tr id="acc-@a.SteamId">
+            <td>@a.SteamId</td><td>@a.Created.ToString("u")</td>
+            <td>@string.Join(", ", Chars.GetValueOrDefault(a.SteamId, []).Select(c => $"{c.Name} ({c.ClassName} {c.Level}{(c.Hardcore ? " HC" : "")}{(c.Deleted ? " deleted" : "")})"))</td>
+            <td>@(a.Banned ? "banned" : "")</td><td>@a.Note</td>
+            <td>
+                @if (a.Banned)
+                {
+                    <button class="unban" @onclick="() => Run(() => Actions.UnbanAccount(a.SteamId))">Unban</button>
+                }
+                else
+                {
+                    <input class="note-in" placeholder="ban note" @bind="Note" />
+                    <button class="ban" @onclick="() => Run(() => Actions.BanAccount(a.SteamId, string.IsNullOrWhiteSpace(Note) ? null : Note))">Ban</button>
+                }
+                <button class="delete" @onclick="() => AskDelete(a)">Delete</button>
+            </td>
+        </tr>
+    }
+</table>
+
+@code {
+    string? Filter, Note;
+    bool BannedOnly;
+    int Skip;
+    IReadOnlyList<Account> Rows = [];
+    Dictionary<string, IReadOnlyList<CharacterRecord>> Chars = [];
+
+    IEnumerable<Account> Shown => Rows.Where(a => (string.IsNullOrWhiteSpace(Filter) || a.SteamId.StartsWith(Filter.Trim(), StringComparison.Ordinal)) && (!BannedOnly || a.Banned));
+
+    protected override async Task LoadAsync() =>
+        (Rows, Chars) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var rows = await tx.Characters.ListAccounts(Skip, Ui.PageSize);
+            var chars = new Dictionary<string, IReadOnlyList<CharacterRecord>>();
+            foreach (var a in rows) chars[a.SteamId] = await tx.Characters.List(a.SteamId, includeDeleted: true);
+            return (rows, chars);
+        });
+
+    void AskDelete(Account a) =>
+        Ask($"Delete account {a.SteamId}: every character marked deleted, the account banned",
+            new { a.Banned, Characters = Chars.GetValueOrDefault(a.SteamId, []).Where(c => !c.Deleted).Select(c => c.Name) },
+            new { Banned = true, Characters = Array.Empty<string>() },
+            () => Actions.DeleteAccount(a.SteamId));
+
+    Task Page(int skip) { Skip = skip; return Reload(); }
+}

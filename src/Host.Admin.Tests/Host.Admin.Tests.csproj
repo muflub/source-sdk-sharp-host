@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Admin/Host.Admin.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+    <!-- The loopback fact runs the real service (ServiceApp.Build) with the admin UI mapped. -->
+    <ProjectReference Include="../Descent.Service/Descent.Service.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="bunit" />
+  </ItemGroup>
+</Project>

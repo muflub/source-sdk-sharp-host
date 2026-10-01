@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- plan D-H11: the game pod's one process. NativeAOT, so no second CoreCLR joins the game's
+       libmanaged_host runtime in the process. Managed-only: NativeLibrary + a marshalled delegate. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <!-- Interpose mode: recvfrom / sendto are exported from the executable, versioned GLIBC_2.2.5 like
+       the references in the engine libraries, so those bind to them (Interpose.cs, interpose.map).
+       Verify with objdump -T on the published exe. -->
+  <ItemGroup>
+    <LinkerArg Include="-Wl,--export-dynamic-symbol=recvfrom" />
+    <LinkerArg Include="-Wl,--export-dynamic-symbol=sendto" />
+    <LinkerArg Include="-Wl,--version-script=$(MSBuildThisFileDirectory)interpose.map" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Host.Relay/Host.Relay.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,9 @@
+bin/
+bin/sh
+game/
+game/mods.yaml
+game/bin/linux64/server.so
+game/bin/managed/SourceSharp.Host.Sdk.dll
+game/bin/dotnet/
+game/bin/srcds_linux64
+game/mods/othermod/gameinfo.txt

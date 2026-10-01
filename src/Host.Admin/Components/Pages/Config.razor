@@ -1,0 +1,64 @@
+@page "/admin/config"
+@inherits AdminPage
+@* Refreshed on load and after each edit. Every option as bound at start; runtime ones take an override from the settings store. *@
+<h1>Config</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar"><input id="f-key" placeholder="key contains" @bind="Filter" /></div>
+<table id="options">
+    <tr><th>key</th><th>configured</th><th>runtime override</th><th></th></tr>
+    @foreach (var (key, value) in Shown)
+    {
+        var over = Overrides.GetValueOrDefault(key);
+        <tr id="opt-@key">
+            <td>@key</td><td><code>@value</code></td>
+            <td>@(over is null ? "" : $"{over.ValueJson} ({over.UpdatedBy}, {over.UpdatedAt:u})")</td>
+            <td>
+                @if (AdminActions.IsRuntimeSetting(key))
+                {
+                    <button class="edit" @onclick="() => { EditKey = key; EditValue = over?.ValueJson ?? value; }">edit</button>
+                }
+            </td>
+        </tr>
+    }
+</table>
+@if (EditKey is not null)
+{
+    <h2 id="editing">@EditKey</h2>
+    <textarea id="value" @bind="EditValue" style="min-height:60px"></textarea>
+    <div class="bar"><button id="save" @onclick="AskSave">Save</button> <span class="note">JSON; applies to what reads it next (new instances, the pool's next plan)</span></div>
+}
+
+@code {
+    string? Filter, EditKey, EditValue;
+    IReadOnlyList<(string Key, string Value)> Rows = [];
+    Dictionary<string, Setting> Overrides = [];
+
+    IEnumerable<(string Key, string Value)> Shown => Rows.Where(r => string.IsNullOrWhiteSpace(Filter) || r.Key.Contains(Filter.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task LoadAsync()
+    {
+        Overrides = (await Data.ReadAsync((tx, _) => tx.Settings.All())).ToDictionary(s => s.Key);
+        var rows = new List<(string, string)>();
+        Flatten(JsonSerializer.SerializeToElement(Options), "", rows);
+        foreach (var k in Overrides.Keys.Where(k => rows.All(r => r.Item1 != k))) rows.Add((k, ""));
+        Rows = rows.OrderBy(r => r.Item1, StringComparer.Ordinal).ToList();
+    }
+
+    static void Flatten(JsonElement e, string path, List<(string, string)> rows)
+    {
+        if (e.ValueKind == JsonValueKind.Object && !(path.Length > 0 && AdminActions.IsRuntimeSetting(path)))
+        {
+            foreach (var p in e.EnumerateObject()) Flatten(p.Value, path.Length == 0 ? p.Name : $"{path}.{p.Name}", rows);
+            return;
+        }
+        rows.Add((path, e.GetRawText()));
+    }
+
+    void AskSave()
+    {
+        var key = EditKey!;
+        var value = EditValue ?? "";
+        Ask($"Set {key}", Overrides.GetValueOrDefault(key)?.ValueJson ?? Rows.FirstOrDefault(r => r.Key == key).Value, value, () => Actions.SetSetting(key, value));
+    }
+}

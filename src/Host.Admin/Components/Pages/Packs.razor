@@ -1,0 +1,135 @@
+@page "/admin/packs"
+@inherits AdminPage
+@* Refreshed on load and after each action. The upload is a plain multipart form to /admin/packs/upload (streamed, never through the circuit). *@
+<h1>Room packs <span class="note">mod @Mod</span></h1>
+@if (UploadResult is not null)
+{
+    <div id="upload-result" class="@(UploadResult.StartsWith("ok") ? "ok" : "refused")">@UploadResult</div>
+}
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+
+<h2>Upload a .roompack</h2>
+<form id="upload" method="post" enctype="multipart/form-data" action="admin/packs/upload">
+    <AntiforgeryToken />
+    <input type="hidden" name="mod" value="@Mod" />
+    <div class="bar">
+        <input name="library" placeholder="library key" required />
+        <input name="note" placeholder="note" />
+    </div>
+    <textarea name="libraryJson" placeholder="library.json (optional: the previous version's is kept)" style="min-height:60px"></textarea>
+    <div class="bar"><input type="file" name="pack" accept=".roompack" required /> <button type="submit">Upload</button>
+        <span class="note">limit @(Options.Admin.MaxUploadBytes / (1024 * 1024)) MiB</span></div>
+</form>
+
+<h2>Versions</h2>
+<table id="packs">
+    <tr><th>id</th><th>library</th><th>version</th><th>state</th><th>source</th><th>uploader</th><th>bytes</th><th>sha256</th><th>library version</th><th>depths</th><th>ready / handed out</th><th>rooms vs previous</th><th>lint</th><th></th></tr>
+    @foreach (var p in Versions)
+    {
+        <tr id="pack-@p.Id">
+            <td>@p.Id</td><td>@p.Library</td><td>@p.Version</td><td>@p.State</td><td>@p.Source</td><td>@p.UploadedBy @p.UploadedAt.ToString("u")</td>
+            <td>@p.Bytes.ToString("N0")</td><td>@Short(p.Sha256)</td><td>@Short(p.LibraryVersion)</td>
+            <td>@string.Join(",", Assignments.Where(a => a.PackId == p.Id).Select(a => a.Depth))</td>
+            <td>@Counts.GetValueOrDefault(p.Id).Ready / @Counts.GetValueOrDefault(p.Id).HandedOut</td>
+            <td>@RoomDiff.GetValueOrDefault(p.Id)</td>
+            <td><code>@Short(p.LintJson, 60)</code></td>
+            <td>@if (p.State == PackState.Ready) { <button class="retire" @onclick="() => AskRetire(p)">Retire</button> }</td>
+        </tr>
+    }
+</table>
+
+<h2>Assignment (depth × version)</h2>
+<table id="matrix">
+    <tr><th>depth</th>@foreach (var p in ReadyPacks) { <th>@p.Library v@p.Version</th> }<th>pinned</th><th>policy</th></tr>
+    @for (var d = 1; d <= Options.MapPool.Depths; d++)
+    {
+        var a = Assignments.FirstOrDefault(x => x.Depth == d);
+        <tr><td>@d</td>@foreach (var p in ReadyPacks) { <td>@(a?.PackId == p.Id ? "●" : "")</td> }<td>@(a?.Pinned == true ? "pinned" : "")</td><td>@a?.OldLevels</td></tr>
+    }
+</table>
+<div class="bar">
+    depths <input id="from" type="number" @bind="From" style="width:4em" /> – <input id="to" type="number" @bind="To" style="width:4em" />
+    <select id="pack" @bind="PackId">@foreach (var p in ReadyPacks) { <option value="@p.Id">@p.Library v@p.Version (#@p.Id)</option> }</select>
+    <select id="policy" @bind="Policy"><option value="Drain">drain old levels</option><option value="Retire">retire old levels now</option></select>
+    <label><input id="pinned" type="checkbox" @bind="Pinned" /> pinned</label>
+    <button id="activate" @onclick="AskActivate">Activate</button>
+    <button id="rollback" @onclick="AskRollBack">Roll back</button>
+    <button id="pin" @onclick="() => Run(() => Actions.PinDepths(Mod, Range, true))">Pin</button>
+    <button id="unpin" @onclick="() => Run(() => Actions.PinDepths(Mod, Range, false))">Unpin</button>
+</div>
+<div class="bar">
+    <input id="rebake-library" placeholder="library" @bind="RebakeLibrary" />
+    <button id="rebake" @onclick="() => Run(() => Actions.RebakePack(Mod, RebakeLibrary ?? string.Empty))">Re-bake from source</button>
+    <button id="gc" @onclick="() => Run(() => Actions.CollectPacks(Mod))">Cache GC</button>
+</div>
+
+<h2>Bake jobs</h2>
+<table id="bakes">
+    <tr><th>id</th><th>key</th><th>state</th><th>attempts</th><th>finished</th><th>log</th></tr>
+    @foreach (var j in Bakes)
+    {
+        <tr><td>@j.Id</td><td>@j.Key</td><td>@j.State</td><td>@j.Attempts</td><td>@j.Finished?.ToString("u")</td><td><pre>@j.Log</pre></td></tr>
+    }
+</table>
+
+@code {
+    [SupplyParameterFromQuery(Name = "result")] public string? UploadResult { get; set; }
+    string Mod => Options.Mod.Name;
+    int From = 1, To = 1;
+    long PackId;
+    bool Pinned = true;
+    OldLevelsPolicy Policy = OldLevelsPolicy.Drain;
+    string? RebakeLibrary;
+    IReadOnlyList<PackRecord> Versions = [];
+    IReadOnlyList<PackRecord> ReadyPacks = [];
+    IReadOnlyList<PackAssignment> Assignments = [];
+    IReadOnlyList<MapJob> Bakes = [];
+    Dictionary<long, (int Ready, int HandedOut)> Counts = [];
+    Dictionary<long, string> RoomDiff = [];
+
+    IReadOnlyCollection<int> Range => From <= To ? Enumerable.Range(From, To - From + 1).ToList() : [];
+
+    protected override async Task LoadAsync()
+    {
+        var depths = Options.MapPool.Depths;
+        (Versions, Assignments, Bakes, Counts) = await Data.ReadAsync(async (tx, _) =>
+        {
+            var packs = (await tx.Library.Packs(Mod)).OrderBy(p => p.Library).ThenByDescending(p => p.Version).ToList();
+            var counts = new Dictionary<long, (int, int)>();
+            foreach (var p in packs.Where(p => p.State is PackState.Ready or PackState.Retired))
+            {
+                int ready = 0, handed = 0;
+                for (var d = 1; d <= depths; d++) { ready += await tx.Levels.Count(d, p.Id, LevelState.Ready); handed += await tx.Levels.Count(d, p.Id, LevelState.HandedOut); }
+                counts[p.Id] = (ready, handed);
+            }
+            return ((IReadOnlyList<PackRecord>)packs, await tx.Library.Assignments(Mod),
+                (IReadOnlyList<MapJob>)(await tx.MapJobs.List(take: 500)).Where(j => j.Kind == MapJobKind.Bake).Take(20).ToList(), counts);
+        });
+        ReadyPacks = Versions.Where(p => p.State == PackState.Ready).OrderBy(p => p.Library).ThenBy(p => p.Version).ToList();
+        if (PackId == 0 && ReadyPacks.Count > 0) PackId = ReadyPacks[^1].Id;
+        RoomDiff = [];
+        if (Optional<SourceSharp.Host.MapPool.PackCatalog>() is { } catalog)
+            foreach (var g in Versions.Where(p => p.Version > 0).GroupBy(p => p.Library))
+            {
+                var ordered = g.OrderBy(p => p.Version).ToList();
+                for (var i = 1; i < ordered.Count; i++)
+                {
+                    var before = catalog.RoomsOf(ordered[i - 1]).Select(r => r.Name).ToHashSet();
+                    var after = catalog.RoomsOf(ordered[i]).Select(r => r.Name).ToHashSet();
+                    RoomDiff[ordered[i].Id] = string.Join(" ", after.Except(before).Select(n => "+" + n).Concat(before.Except(after).Select(n => "-" + n)));
+                }
+            }
+    }
+
+    object Matrix => Assignments.Where(a => Range.Contains(a.Depth)).Select(a => new { a.Depth, a.PackId, a.Pinned }).ToList();
+    object Planned => Range.Select(d => new { Depth = d, PackId, Pinned }).ToList();
+
+    void AskRetire(PackRecord p) => Ask($"Retire pack {p.Library} v{p.Version}", new { p.State }, new { State = PackState.Retired }, () => Actions.RetirePack(p.Id));
+
+    void AskActivate() => Ask($"Activate pack #{PackId} on depths {From}–{To} ({Policy})", Matrix, Planned,
+        () => Actions.ActivatePack(Mod, Range, PackId, Pinned, Policy));
+
+    void AskRollBack() => Ask($"Roll depths {From}–{To} back to pack #{PackId} ({Policy})", Matrix, Planned,
+        () => Actions.RollBackPack(Mod, Range, PackId, Policy));
+}

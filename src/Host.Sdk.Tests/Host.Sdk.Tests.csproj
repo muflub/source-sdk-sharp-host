@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Sdk/Host.Sdk.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+    <!-- The facts run the SDK against the real service (and the real sidecar) in-process. -->
+    <ProjectReference Include="../Descent.Service/Descent.Service.csproj" />
+    <ProjectReference Include="../Host.Relay/Host.Relay.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+</Project>

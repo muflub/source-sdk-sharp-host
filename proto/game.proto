@@ -1,0 +1,491 @@
+syntax = "proto3";
+
+package descent.host.v1;
+
+import "common.proto";
+
+option csharp_namespace = "SourceSharp.Host.Proto";
+
+// The game-server API (plan §6). Every call carries "x-instance-id" and
+// "x-instance-token" metadata, checked against instances.token_hash. Every
+// mutating request carries request_id (idempotency, §4.4); every character
+// write carries lease_token (§4.3). The game never sees this file: it uses
+// Host.Sdk (§6.6).
+
+// ---------------------------------------------------------------- instance
+
+service InstanceService {
+  // One stream per pod, held for its life: heartbeats up, commands down (Q5, §6.1).
+  // Its close is the crash signal; three missed heartbeats -> suspect, six -> reap.
+  rpc Connect(stream Heartbeat) returns (stream ServerCommand);
+
+  rpc Booting(BootingRequest) returns (BootingResponse);
+  // Only after Booting answered MODULE_SEND (D-H9, hash first, bytes on request).
+  rpc UploadModule(stream ModuleChunk) returns (UploadModuleResponse);
+  rpc MapReady(MapReadyRequest) returns (MapReadyResponse);
+  rpc PlayerJoined(PlayerJoinedRequest) returns (PlayerJoinedResponse);
+  rpc ResolvePeer(ResolvePeerRequest) returns (ResolvePeerResponse);
+  rpc PlayerLeft(PlayerLeftRequest) returns (Ack);
+  rpc HopReady(HopReadyRequest) returns (Ack);
+  rpc ExecResult(ExecResultRequest) returns (Ack);
+  rpc Log(LogRequest) returns (Ack);
+}
+
+message Ack {}
+
+message Heartbeat {
+  uint64 seq = 1;
+  int32 players = 2;
+  float tick_ms = 3;
+}
+
+message ServerCommand {
+  string command_id = 1;
+  oneof kind {
+    Drain drain = 10;
+    Kick kick = 11;
+    Shutdown shutdown = 12;
+    Retry retry = 13;
+    PrepareHop prepare_hop = 14;
+    Say say = 15;
+    Exec exec = 16;
+    LeaseRevoked lease_revoked = 17;
+    HeartbeatAck heartbeat_ack = 18;
+  }
+}
+
+message Drain { string reason = 1; }
+message Kick { string steamid = 1; string reason = 2; }
+message Shutdown { string reason = 1; }
+message Retry { string steamid = 1; }
+message PrepareHop { string steamid = 1; string hop_id = 2; string target_instance = 3; }
+message Say { string text = 1; }
+message Exec { string command = 1; }
+message LeaseRevoked { string character_id = 1; string reason = 2; }
+message HeartbeatAck { uint64 seq = 1; }
+
+message RulesModule {
+  string assembly = 1;
+  string version = 2;
+  string sha256 = 3;           // hex, lowercase, of the main assembly's bytes
+  string contract_version = 4; // Host.Contracts semver the module was built against
+  repeated ModuleDependency deps = 5;
+}
+
+message ModuleDependency {
+  string assembly = 1;
+  string sha256 = 2;
+}
+
+enum ModuleAnswer {
+  MODULE_ANSWER_UNSPECIFIED = 0;
+  MODULE_ANSWER_KNOWN = 1;     // the host has these bytes; upload nothing
+  MODULE_ANSWER_SEND = 2;      // stream them with UploadModule
+  MODULE_ANSWER_PENDING = 3;   // known, awaiting admin approval (Modules.RequireApproval)
+}
+
+message BootingRequest {
+  string request_id = 1;
+  string sdk_version = 2;
+  RulesModule module = 3;
+  string map = 4;
+  string mod_image_digest = 5; // what the pod actually runs, if the entrypoint knows it
+}
+
+message BootingResponse {
+  ModuleAnswer module = 1;
+  uint64 instance_seed = 2;    // the seed KillRoll replays from
+  string instance_kind = 3;    // "hub" | "level"
+  int32 depth = 4;
+  string level_hash = 5;
+}
+
+message ModuleChunk {
+  string sha256 = 1;           // which declared file this chunk belongs to (main or a dep)
+  string file_name = 2;
+  bytes data = 3;
+  bool last = 4;               // last chunk of this file
+}
+
+message UploadModuleResponse {
+  bool accepted = 1;
+  string reason = 2;
+}
+
+message MapReadyRequest {
+  string request_id = 1;
+  int32 port = 2;              // the port the socket reports, not the one asked for
+  string map = 3;
+}
+
+message MapReadyResponse {
+  int32 expected_port = 1;
+}
+
+message PlayerJoinedRequest {
+  string request_id = 1;
+  string peer = 2;             // ip:port as INetChannelInfo::GetAddress reports it
+  string steamid = 3;
+}
+
+message PlayerJoinedResponse {
+  bool allowed = 1;
+  string reason = 2;
+  string session_id = 3;
+  string client_addr = 4;      // the player's real address, resolved by the gateway
+}
+
+message ResolvePeerRequest { string peer = 1; }
+
+message ResolvePeerResponse {
+  bool found = 1;
+  string session_id = 2;
+  string client_addr = 3;
+  string steamid = 4;
+}
+
+message PlayerLeftRequest {
+  string request_id = 1;
+  string steamid = 2;
+  string peer = 3;
+}
+
+message HopReadyRequest {
+  string request_id = 1;
+  string hop_id = 2;
+  string steamid = 3;
+}
+
+message ExecResultRequest {
+  string command_id = 1;
+  string output = 2;
+}
+
+message LogLine {
+  int64 at_unix_ms = 1;
+  string level = 2;
+  string text = 3;
+}
+
+message LogRequest {
+  repeated LogLine lines = 1;
+  int32 dropped = 2;           // lines the SDK's throttle discarded since the last call
+}
+
+// ---------------------------------------------------------------- characters
+
+service CharacterService {
+  rpc List(ListCharactersRequest) returns (ListCharactersResponse);   // hub only
+  rpc Create(CreateCharacterRequest) returns (Character);             // hub only
+  rpc Delete(DeleteCharacterRequest) returns (Ack);                   // hub only
+  rpc Lease(LeaseRequest) returns (LeaseResponse);
+  rpc Release(ReleaseRequest) returns (Ack);
+  rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse);
+  rpc GetSheet(GetSheetRequest) returns (Character);
+  rpc SetReachedDepth(SetReachedDepthRequest) returns (Character);
+}
+
+message ListCharactersRequest { string account = 1; }
+message ListCharactersResponse { repeated Character characters = 1; }
+
+message CreateCharacterRequest {
+  string request_id = 1;
+  string account = 2;
+  string class_name = 3;
+  string name = 4;
+  bool hardcore = 5;
+}
+
+message DeleteCharacterRequest {
+  string request_id = 1;
+  string character_id = 2;
+}
+
+message LeaseRequest {
+  string request_id = 1;
+  string character_id = 2;
+}
+
+message LeaseResponse {
+  bytes token = 1;             // 32 random bytes; carried by every write
+  int64 expires_unix_ms = 2;
+  Character character = 3;
+}
+
+message ReleaseRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+}
+
+message CheckpointRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  Blob sheet = 4;
+  Blob evidence = 5;
+  int64 expected_version = 6;
+}
+
+message CheckpointResponse {
+  int64 version = 1;
+  repeated int32 stale_reserve_tiers = 2; // tiers swept for a >= 2 level jump (§5.2a)
+}
+
+message GetSheetRequest { string character_id = 1; }
+
+message SetReachedDepthRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  int32 depth = 4;
+}
+
+// ---------------------------------------------------------------- items (R-H1, §5)
+
+service ItemService {
+  rpc TakeReserve(TakeReserveRequest) returns (TakeReserveResponse);
+  rpc Reveal(RevealRequest) returns (RevealResponse);
+  rpc MintDrops(MintDropsRequest) returns (ItemsResponse);
+  rpc Claim(ItemActionRequest) returns (Item);
+  rpc Drop(DropRequest) returns (Item);
+  rpc Move(MoveRequest) returns (Item);
+  rpc StashMove(StashMoveRequest) returns (Item);
+  rpc GetBackpack(CharacterRef) returns (ItemsResponse);
+  rpc GetStash(StashRef) returns (ItemsResponse);
+  rpc GetVendorStock(VendorRef) returns (ItemsResponse);
+  rpc Buy(ItemActionRequest) returns (Item);
+  rpc Sell(ItemActionRequest) returns (WalletResponse);
+  rpc BuyBack(ItemActionRequest) returns (Item);
+  rpc OpenCrate(ItemActionRequest) returns (Item);
+  rpc Craft(CraftRequest) returns (Item);
+  rpc Identify(ItemActionRequest) returns (Item);
+  rpc Repair(ItemActionRequest) returns (Item);
+  rpc Salvage(ItemActionRequest) returns (ItemsResponse);
+  rpc RecordDeath(RecordDeathRequest) returns (ItemsResponse);
+  rpc LootCorpse(LootCorpseRequest) returns (ItemsResponse);
+  rpc ListWorldItems(ListWorldItemsRequest) returns (ItemsResponse);
+}
+
+message TierCount {
+  int32 tier = 1;
+  int32 count = 2;
+}
+
+message TakeReserveRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  repeated TierCount wanted = 4;
+}
+
+message TakeReserveResponse {
+  repeated Item items = 1;     // each carries its tier
+}
+
+message RevealRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string item_id = 4;
+  uint32 kill_seq = 5;
+  string robot_template = 6;
+  repeated string nearby_members = 7; // character ids sharing the Australium (R4)
+  Vec3 position = 8;
+}
+
+message RevealResponse {
+  Item item = 1;
+  int64 australium_booked = 2;
+}
+
+message MintDropsRequest {
+  string request_id = 1;
+  string killer_character = 2;
+  bytes lease_token = 3;
+  string robot_template = 4;
+  int32 depth = 5;
+  repeated string nearby_members = 6;
+  uint32 kill_seq = 7;
+  int32 tier = 8;              // >= 0: the empty-reserve fallback for this tier; -1: a boss table
+  Vec3 position = 9;
+}
+
+message ItemsResponse { repeated Item items = 1; }
+
+message ItemActionRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string item_id = 4;
+  string vendor = 5;           // Buy / Sell / BuyBack
+}
+
+message DropRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string item_id = 4;
+  Vec3 position = 5;
+}
+
+message MoveRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string item_id = 4;
+  int32 slot = 5;
+}
+
+message StashMoveRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string item_id = 4;
+  bool to_stash = 5;
+  int32 slot = 6;
+}
+
+message CharacterRef { string character_id = 1; }
+message StashRef { string account = 1; bool hardcore = 2; }
+message VendorRef { string vendor = 1; }
+
+message WalletResponse { int64 australium = 1; }
+
+message CraftRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string recipe = 4;
+  repeated string inputs = 5;
+}
+
+message RecordDeathRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  Vec3 position = 4;
+}
+
+message LootCorpseRequest {
+  string request_id = 1;
+  string character_id = 2;     // the looter, who owns the corpse (own corpse only)
+  bytes lease_token = 3;
+}
+
+message ListWorldItemsRequest {}
+
+// ---------------------------------------------------------------- parties, trades, lost & found (§6.4)
+
+service PartyService {
+  rpc Create(PartyRequest) returns (Party);
+  rpc Invite(PartyRequest) returns (Party);
+  rpc Accept(PartyRequest) returns (Party);
+  rpc Leave(PartyRequest) returns (Ack);
+  rpc Kick(PartyRequest) returns (Party);
+  rpc Get(PartyRequest) returns (Party);
+}
+
+message PartyRequest {
+  string request_id = 1;
+  string character_id = 2;     // the caller
+  bytes lease_token = 3;
+  string party_id = 4;
+  string target_character = 5; // Invite / Kick
+}
+
+message Party {
+  string id = 1;
+  string leader = 2;
+  repeated string members = 3;
+  repeated string invited = 4;
+  string live_instance = 5;
+}
+
+service TradeService {
+  rpc Open(TradeRequest) returns (Trade);
+  rpc Offer(TradeRequest) returns (Trade);
+  rpc Lock(TradeRequest) returns (Trade);
+  rpc Confirm(TradeRequest) returns (Trade);
+  rpc Cancel(TradeRequest) returns (Trade);
+}
+
+message TradeRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string trade_id = 4;
+  string other_character = 5;  // Open
+  repeated string item_ids = 6; // Offer: the caller's full offer
+  int64 australium = 7;        // Offer
+}
+
+enum TradeStateKind {
+  TRADE_STATE_UNSPECIFIED = 0;
+  TRADE_STATE_OPEN = 1;
+  TRADE_STATE_LOCKED = 2;      // both sides locked
+  TRADE_STATE_COMMITTED = 3;
+  TRADE_STATE_CANCELLED = 4;
+}
+
+message Trade {
+  string id = 1;
+  string a = 2;
+  string b = 3;
+  TradeStateKind state = 4;
+  repeated string offer_a = 5;
+  repeated string offer_b = 6;
+  int64 australium_a = 7;
+  int64 australium_b = 8;
+  bool locked_a = 9;
+  bool locked_b = 10;
+  bool confirmed_a = 11;
+  bool confirmed_b = 12;
+}
+
+service LostAndFoundService {
+  rpc List(CharacterRef) returns (LostAndFoundList);
+  rpc Reclaim(ItemActionRequest) returns (Item);
+}
+
+message LostAndFoundEntry {
+  string id = 1;
+  Item item = 2;
+  int64 fee = 3;
+  int64 since_unix_ms = 4;
+  string origin_instance = 5;
+}
+
+message LostAndFoundList { repeated LostAndFoundEntry entries = 1; }
+
+// ---------------------------------------------------------------- travel (§6.5)
+
+service TravelService {
+  rpc RequestDescent(TravelRequest) returns (TravelResponse);
+  rpc StairsDown(TravelRequest) returns (TravelResponse);
+  rpc TownPortal(TravelRequest) returns (TravelResponse);
+  rpc ReturnThroughPortal(TravelRequest) returns (TravelResponse);
+  rpc ReturnToCorpse(TravelRequest) returns (TravelResponse);
+}
+
+message TravelRequest {
+  string request_id = 1;
+  string character_id = 2;     // the caller (the leader for RequestDescent / StairsDown)
+  bytes lease_token = 3;
+  string party_id = 4;
+  int32 depth = 5;
+}
+
+enum TravelState {
+  TRAVEL_STATE_UNSPECIFIED = 0;
+  TRAVEL_STATE_STARTED = 1;    // hops are under way; PrepareHop follows on the stream
+  TRAVEL_STATE_WAITING = 2;    // no ready level or at the instance cap: eta_ms
+  TRAVEL_STATE_REFUSED = 3;
+}
+
+message TravelResponse {
+  TravelState state = 1;
+  string instance_id = 2;
+  int64 eta_ms = 3;
+  string reason = 4;
+}

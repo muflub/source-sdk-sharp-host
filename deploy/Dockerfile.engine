@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1
+# The engine image (plan H1d, D-H6, D-H11): Source SDK Base 2013 Dedicated Server (Steam app 244310,
+# anonymous steamcmd, 64-bit depots), the 64-bit libraries 244310 lacks taken from an overlay, the
+# steamclient.so steamcmd ships, and Host.Launcher (NativeAOT: the relay + srcds in one process).
+# NO mod files: the mod image's init container copies /game into the pod's `game` volume at run
+# time. NO TF2 content: that is a volume filled by a Job.
+#
+# Build contexts (make image-engine):
+#   maptools     $(MapToolsRoot), for roots.props like every image here (the launcher does not use it)
+#   enginefiles  a directory whose bin/linux64/ holds the libraries 244310 lacks (libsteam_api.so,
+#                filesystem_stdio.so, libtier0.so, libvstdlib.so, ...): by default the local
+#                "Source SDK Base 2013 Multiplayer" install (app 243750). For production that
+#                directory must come from a licensed source (docs/ops.md).
+
+# 1. 244310, 64-bit. Anonymous 244310 intermittently fails with "Missing configuration" and steamcmd
+#    stops at the first failed command, so the whole run is retried. 64-bit depots must be forced.
+FROM docker.io/steamcmd/steamcmd:debian AS steam
+RUN for i in 1 2 3 4 5; do \
+      steamcmd +@sSteamCmdForcePlatformType linux +@sSteamCmdForcePlatformBitness 64 \
+        +force_install_dir /opt/srcds +login anonymous +app_info_update 1 +app_update 244310 validate +quit \
+      && test -f /opt/srcds/bin/linux64/dedicated_srv.so && break; \
+      echo "steamcmd attempt $i failed"; sleep 10; \
+    done; test -f /opt/srcds/bin/linux64/dedicated_srv.so \
+ && mkdir -p /opt/steamclient \
+ && cp "$(find / -xdev -path '*linux64/steamclient.so' -print -quit)" /opt/steamclient/steamclient.so
+
+# 2. Host.Launcher, NativeAOT (needs clang and zlib to link).
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS launcher
+# Never name a build arg VERSION: RUN sees it as an environment variable, MSBuild reads that as
+# $(Version), and a git sha there makes NuGet restore fail without logging an error.
+ARG BUILD_VERSION=0.0.0-dev
+ENV HOME=/root DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+RUN apt-get update && apt-get install -y --no-install-recommends clang zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY --from=maptools src /maptools/src
+RUN find /maptools -type d \( -name obj -o -name bin \) -prune -exec rm -rf {} +
+COPY . .
+RUN rm -f global.json \
+ && printf '<Project><PropertyGroup><MapToolsRoot>/maptools/</MapToolsRoot></PropertyGroup></Project>\n' > roots.props \
+ && dotnet publish src/Host.Launcher/Host.Launcher.csproj -c Release -r linux-x64 -o /out --nologo \
+      -p:InformationalVersion=$BUILD_VERSION \
+ && test -x /out/SourceSharp.Host.Launcher
+
+# 3. The engine tree: 244310, then the overlay's bin/linux64/*.so with no-clobber (anonymous files win).
+FROM debian:bookworm-slim AS merge
+COPY --from=steam /opt/srcds /opt/srcds
+COPY --from=enginefiles bin/linux64/ /overlay/bin/linux64/
+RUN added=0; for f in /overlay/bin/linux64/*.so; do \
+      [ -e "/opt/srcds/bin/linux64/$(basename "$f")" ] || { cp "$f" /opt/srcds/bin/linux64/; added=$((added+1)); }; \
+    done; echo "overlay: $added libraries added to bin/linux64"; \
+    for need in libsteam_api.so filesystem_stdio.so libtier0.so libvstdlib.so; do \
+      test -f "/opt/srcds/bin/linux64/$need" || { echo "overlay lacks bin/linux64/$need"; exit 1; }; \
+    done
+
+# 4. Runtime. Ubuntu 26.04 (glibc 2.43): the mod's native libraries (server_srv.so,
+# libmanaged_host.so) are built by the sharp repo on its build host and need at least that
+# glibc (H0a, 2026-09-30: bookworm's 2.36 refused server_srv.so, "GLIBC_2.43 not found").
+# libicu: the game's own CoreCLR is not invariant-globalization (it FailFasts without ICU).
+FROM docker.io/library/ubuntu:26.04
+ARG BUILD_VERSION=0.0.0-dev
+LABEL org.opencontainers.image.version=$BUILD_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl bzip2 libstdc++6 libgcc-s1 zlib1g libicu78 \
+ && rm -rf /var/lib/apt/lists/* \
+ && (userdel -r ubuntu 2>/dev/null || true) \
+ && useradd -m -u 1000 srcds
+COPY --from=merge --chown=srcds /opt/srcds /opt/srcds
+# The engine loads steamclient.so from the run user's ~/.steam/sdk64.
+COPY --from=steam --chown=srcds /opt/steamclient/steamclient.so /home/srcds/.steam/sdk64/steamclient.so
+COPY --from=launcher /out/SourceSharp.Host.Launcher /opt/descent/launcher
+COPY deploy/game-entrypoint.sh deploy/fetch-level.sh /opt/descent/
+RUN chmod 0755 /opt/descent/*.sh /opt/descent/launcher
+USER srcds
+# PeerRelay (gateway), health; PeerInfo is loopback-only (5011) and the game port is inside the pod.
+EXPOSE 5010 5012
+ENTRYPOINT ["/opt/descent/game-entrypoint.sh"]

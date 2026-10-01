@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Host.Abstractions/Host.Abstractions.csproj" />
+    <ProjectReference Include="../Host.Proto/Host.Proto.csproj" />
+    <ProjectReference Include="../Host.Modules/Host.Modules.csproj" />
+    <ProjectReference Include="../Host.Data/Host.Data.csproj" />
+    <ProjectReference Include="../Host.Instances/Host.Instances.csproj" />
+    <ProjectReference Include="../Host.MapPool/Host.MapPool.csproj" />
+    <ProjectReference Include="../Host.Admin/Host.Admin.csproj" />
+    <ProjectReference Include="../Descent.MapForge/Descent.MapForge.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="prometheus-net.AspNetCore" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,48 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+
+    <!--
+      Project directories keep the plan's short names (Host.Sdk); assemblies and
+      namespaces carry the SourceSharp prefix. A namespace that starts with
+      "Host" collides with Microsoft.Extensions.Hosting.Host in every
+      composition root, and the NuGet ids are SourceSharp.Host.* anyway.
+    -->
+    <AssemblyName Condition="$(MSBuildProjectName.StartsWith('Host.'))">SourceSharp.$(MSBuildProjectName)</AssemblyName>
+    <RootNamespace>$(AssemblyName)</RootNamespace>
+
+    <!-- Build output and intermediates under bin/, per project: two exes and
+         eight test projects with different dependency closures never share a folder. -->
+    <BaseIntermediateOutputPath>$(RepoRoot)bin/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- Configuration is not set yet when this file is read for a project built without -c:
+         default it here, or those builds land in bin/<Project>/ beside the real bin/Debug/ tree
+         and a later test run without a build picks up a stale copy. -->
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <OutputPath>$(RepoRoot)bin/$(Configuration)/$(MSBuildProjectName)/</OutputPath>
+
+    <!--
+      Two warnings promoted to errors, and only two: CS0108 and CS0114, the
+      member-hiding pair, which are language rules rather than analyser
+      opinions. Not TreatWarningsAsErrors: that promotes whatever the current
+      SDK's analysers warn about, so an SDK update would stop this build for
+      reasons unrelated to the code.
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS0108;CS0114</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- roots.props is written by `make setup` and carries $(MapToolsRoot). -->
+  <Import Project="$(RepoRoot)roots.props" Condition="Exists('$(RepoRoot)roots.props')" />
+
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+</Project>

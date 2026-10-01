@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Host.Abstractions/Host.Abstractions.csproj" />
+    <ProjectReference Include="../Host.Contracts/Host.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- IServiceCollection, IOptionsMonitor, BackgroundService, ILogger: the shared framework, no versioned package. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SourceSharp.Host.Modules.Tests" />
+  </ItemGroup>
+</Project>
