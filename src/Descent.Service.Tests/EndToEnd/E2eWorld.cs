@@ -39,11 +39,28 @@ public sealed class E2eWorld : IAsyncDisposable
     readonly List<GrpcChannel> _channels = [];
     long _packId;
 
-    public static async Task<E2eWorld> Start(Dictionary<string, string?>? settings = null)
+    /// <summary>
+    /// The game API, gateway API and gateway control ports must be fixed before the start (pods are
+    /// told the service's address, the gateway and the service each dial the other), so they are
+    /// picked free and released, and something else can take one before Kestrel binds it. A bind
+    /// that fails with "address already in use" tears down what started and starts again on fresh ports.
+    /// </summary>
+    /// <param name="pickPort">Picks each fixed port (the facts' seam for a port taken before the bind).</param>
+    public static async Task<E2eWorld> Start(Dictionary<string, string?>? settings = null, Func<int>? pickPort = null)
     {
-        var gameApi = TestService.FreePort();
-        var gatewayApi = TestService.FreePort();
-        var gatewayControl = TestService.FreePort();
+        pickPort ??= TestService.FreePort;
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return await StartOnce(settings, pickPort); }
+            catch (IOException e) when (attempt < 5 && e.InnerException is Microsoft.AspNetCore.Connections.AddressInUseException) { }
+        }
+    }
+
+    static async Task<E2eWorld> StartOnce(Dictionary<string, string?>? settings, Func<int> pickPort)
+    {
+        var gameApi = pickPort();
+        var gatewayApi = pickPort();
+        var gatewayControl = pickPort();
         var modules = Directory.CreateTempSubdirectory("e2e-modules-").FullName;
         var pods = new FakeGameInstanceHost();
         pods.ExtraEnv["FAKEGAME_HeartbeatMs"] = "200";
@@ -79,15 +96,27 @@ public sealed class E2eWorld : IAsyncDisposable
             b.Services.AddSingleton<IInstanceHost>(pods);
             b.Services.AddSingleton<IHopListener>(sp => new CheckingHops(sp.GetRequiredService<TravelCoordinator>(), sp.GetRequiredService<IHostData>()));
         });
-        await service.StartAsync();
-
         var gateway = GatewayApp.Build(["--environment", "Development"], b => b.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["GatewayId"] = "gw-e2e", ["Public"] = "127.0.0.1:0", ["Control"] = $"127.0.0.1:{gatewayControl}", ["Health"] = "127.0.0.1:0",
             ["Service"] = $"http://127.0.0.1:{gatewayApi}", ["HandshakesPerSecond"] = "1000", ["PingInterval"] = "00:00:00.500",
             ["Serilog:MinimumLevel:Default"] = "Warning",
         }));
-        await gateway.StartAsync();
+        try
+        {
+            await service.StartAsync();
+            await gateway.StartAsync();
+        }
+        catch (IOException)
+        {
+            // A port was taken: stop whatever started (the manager may already have created the hub's pod).
+            await gateway.DisposeAsync();
+            await pods.DisposeAsync();
+            try { await service.StopAsync(); } catch (Exception) { }
+            await service.DisposeAsync();
+            try { Directory.Delete(modules, true); } catch (IOException) { }
+            throw;
+        }
         var world = new E2eWorld
         {
             Service = service, Gateway = gateway, Pods = pods, ModulesDir = modules,
