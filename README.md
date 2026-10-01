@@ -75,7 +75,20 @@ MSBUILDDISABLENODEREUSE=1 ~/.dotnet/dotnet test Host.slnx --nologo -m:1
 | `Host.FakeGame-<version>-linux-x64.tar.gz` | the fake game server used by tests and `TIER=fake` | ASP.NET Core 10 runtime |
 | `Host.Launcher-<version>-linux-x64.tar.gz` | the game pod's launcher (NativeAOT) | nothing (native executable) |
 
-The production deployment uses container images rather than these tarballs; see below.
+### Container images
+
+CI also builds the container images from `deploy/Dockerfile.*` and pushes them to the GitHub
+Container Registry:
+
+| image | from |
+|---|---|
+| `ghcr.io/muflub/descent-service` | `deploy/Dockerfile.service` |
+| `ghcr.io/muflub/descent-gateway` | `deploy/Dockerfile.gateway` |
+| `ghcr.io/muflub/descent-fake` | `deploy/Dockerfile.fake` (the engine image of `TIER=fake`) |
+
+A push to `main` tags them `main` and `sha-<short sha>`; a `v1.2.3` tag adds `1.2.3` and
+`latest`. Pull requests build the images without pushing. The engine image is not built in CI:
+it needs engine files that only a licensed install provides (`make image-engine`, `docs/ops.md`).
 
 ## Running
 
@@ -116,6 +129,8 @@ pull request, and by hand:
 1. checks out this repo and the map tools, installs the SDK from `global.json`
 2. `make setup`, `make build CONFIG=Release`, the tests (results uploaded as `test-results`)
 3. `make publish` and `make pack`, uploaded as the workflow artifact **`linux-build`**
+4. once the tests pass, the service, gateway and fake images, pushed to `ghcr.io` on `main` and
+   on tags (see [Container images](#container-images))
 
 Pushing a tag `v*` (for example `v0.1.0`) does the same and then creates a GitHub Release for the
 tag with the tarballs, `SHA256SUMS` and the NuGet packages attached, the packages versioned from
@@ -127,6 +142,10 @@ The map tools are a private repository, so CI needs one repository secret:
 |---|---|---|
 | `MAPTOOLS_TOKEN` | secret | a fine-grained token with read-only **Contents** access to `muflub/hl2sdk_tools_sharp` |
 | `MAPTOOLS_REF` | variable, optional | the map tools ref to build against (default `main`) |
+
+Images push with the workflow's own `GITHUB_TOKEN`; no registry secret is needed. The first
+push creates each package as private: make it public, or link it to this repository, under the
+package's settings on GitHub.
 
 ## Contributing
 
