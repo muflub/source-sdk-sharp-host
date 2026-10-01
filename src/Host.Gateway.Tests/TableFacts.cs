@@ -128,7 +128,7 @@ public class TableFacts
         var hub = rig.Backend("hub");
         rig.SetDefault(hub);
         var c = rig.Client(1);
-        await c.ConnectAsync(T);
+        await rig.ConnectSettled(c, hub);
         var peer = rig.PeerOf(c);
         var sessionId = rig.Relay.SessionOf(c.LocalEndPoint)!.SessionId;
 
@@ -154,7 +154,7 @@ public class TableFacts
         var hub = rig.Backend("hub");
         rig.SetDefault(hub);
         var c = rig.Client(1);
-        await c.ConnectAsync(T);
+        await rig.ConnectSettled(c, hub);
         await rig.DisposeRelayOnlyAsync();
         await using var rig2 = new Rig(o => o.Public = $"127.0.0.1:{rig.Relay.PublicEndPoint.Port}");
         rig2.Relay.SyncTable(new RouteTable

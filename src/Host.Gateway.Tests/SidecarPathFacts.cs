@@ -35,7 +35,7 @@ public class SidecarPathFacts
         rig.SetDefault(hub);
         var first = rig.Client(Sid);
         Assert.Equal(ControlStatus.Ok, rig.Relay.SetRoute(rig.Next(), first.LocalEndPoint.ToString(), hub.EndPoint.ToString(), Sid.ToString()));
-        await first.ConnectAsync(T);
+        await rig.ConnectSettled(first, hub);
         var address = rig.PeerOf(first).Address;
         rig.Relay.CloseSession(rig.Next(), first.LocalEndPoint.ToString(), "left");
         Assert.True(await Rig.Until(() => hub.Sidecar.Table.LiveCount == 0));
@@ -54,7 +54,7 @@ public class SidecarPathFacts
         var hub = rig.Backend("hub");
         rig.SetDefault(hub);
         var first = rig.Client(Sid);
-        await first.ConnectAsync(T);
+        await rig.ConnectSettled(first, hub);
         var address = rig.PeerOf(first).Address;
         rig.Relay.CloseSession(rig.Next(), first.LocalEndPoint.ToString(), "left");
         Assert.True(await Rig.Until(() => hub.Sidecar.Table.LiveCount == 0));
@@ -86,7 +86,7 @@ public class SidecarPathFacts
         var b = rig.Backend("b");
         rig.SetDefault(a);
         var c = rig.Client(Sid);
-        await c.ConnectAsync(T);
+        await rig.ConnectSettled(c, a); // else the post-accept keepalive lands on A after the snapshot
         rig.Relay.SetRoute(rig.Next(), c.LocalEndPoint.ToString(), b.EndPoint.ToString(), Sid.ToString());
         var atA = a.Log.Count;
         // The flip starts at the client's next handshake; everything after it waits for B's Opened.

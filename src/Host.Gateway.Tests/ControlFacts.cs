@@ -120,7 +120,7 @@ public class EventsFacts
         var hub = rig.Backend("hub");
         rig.SetDefault(hub);
         var c = rig.Client(1);
-        await c.ConnectAsync(T);
+        await rig.ConnectSettled(c, hub);
         rig.Relay.CloseSession(rig.Next(), c.LocalEndPoint.ToString(), "kicked");
         Assert.True(await Rig.Until(() => svc.Sessions.Count == 2));
         Assert.Equal(["opened", "closed"], svc.Sessions.Select(s => s.Kind));
