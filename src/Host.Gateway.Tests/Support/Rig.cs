@@ -74,6 +74,20 @@ public sealed class Rig : IAsyncDisposable
         return c;
     }
 
+    /// <summary>
+    /// ConnectAsync, then waits until the client's post-accept keepalive has reached
+    /// <paramref name="pod"/>'s engine. ConnectAsync returns as soon as the accept arrives, while that
+    /// keepalive may still sit in the gateway's socket: a fact that closes the session, flips the
+    /// route, restarts the relay or snapshots the engine's log in that window races it (a late
+    /// keepalive reopens a closed session as a new, unidentified one).
+    /// </summary>
+    public async Task<string> ConnectSettled(Client c, Pod pod)
+    {
+        var id = await c.ConnectAsync(T);
+        Assert.True(await pod.WaitForAsync(l => l.Any(r => r.Kind == ToyWire.Keepalive), T), "the post-accept keepalive never reached the engine");
+        return id;
+    }
+
     /// <summary>The next table version, as the service would produce it.</summary>
     public ulong Next() => ++_version;
 

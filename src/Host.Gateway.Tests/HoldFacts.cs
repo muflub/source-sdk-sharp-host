@@ -38,7 +38,7 @@ public class HoldFacts
         var b = rig.Backend("b");
         rig.SetDefault(a);
         var c = rig.Client(1);
-        await c.ConnectAsync(T);
+        await rig.ConnectSettled(c, a); // else the post-accept keepalive lands on A after the snapshot
         Assert.Equal(ControlStatus.Ok, rig.Relay.SetRoute(rig.Next(), c.LocalEndPoint.ToString(), b.EndPoint.ToString(), Sid, holdUntilReady: true));
         var aBefore = a.Log.Count;
         a.SendRetry(rig.PeerOf(c));

@@ -96,10 +96,16 @@ public sealed class SdkHarness : IAsyncDisposable
             now, state == InstanceState.Live ? now : null, null, null, null, null, now, 0, 27015)));
     }
 
-    /// <summary>Fast timers for facts: heartbeats every 100 ms, short retries.</summary>
+    /// <summary>
+    /// Fast timers for facts: heartbeats every 100 ms, short retries. The ack-silence budget is
+    /// 3 s, not 3 heartbeats: a loaded test host acks hundreds of ms late, and an SDK that gives
+    /// up on that live stream closes it, which the service treats as a crash (§6.1), so every
+    /// later call is bad_token (SessionFacts.A_service_that_acks_late_keeps_the_stream_and_its_row).
+    /// </summary>
     public static HostSdkOptions FastOptions() => new()
     {
         HeartbeatInterval = TimeSpan.FromMilliseconds(100),
+        MissedAcksBeforeReconnect = 30,
         ReconnectBackoff = TimeSpan.FromMilliseconds(50),
         ReconnectBackoffMax = TimeSpan.FromMilliseconds(200),
         RetryBackoff = TimeSpan.FromMilliseconds(50),

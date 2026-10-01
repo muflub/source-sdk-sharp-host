@@ -98,6 +98,8 @@ public sealed class GrpcGatewayEvents : IGatewayEvents, IAsyncDisposable
             }
         }
         catch (OperationCanceledException) { }
+        // A call on the wire when the gateway stops ends as Cancelled: that is the stop, not a failure.
+        catch (RpcException e) when (e.StatusCode == StatusCode.Cancelled && ct.IsCancellationRequested) { }
     }
 
     int _disposed;

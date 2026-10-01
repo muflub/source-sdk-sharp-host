@@ -26,6 +26,7 @@ public sealed class FakeClient : IDisposable
     int _challenge;
     bool _sentConnect;
     uint _seq;
+    uint _echoFor; // the keepalive KeepaliveAsync waits on; 0 = none (seqs start at 1)
     TaskCompletionSource<string> _connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
     TaskCompletionSource<string> _echo = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -118,16 +119,21 @@ public sealed class FakeClient : IDisposable
         return condition(this);
     }
 
-    /// <summary>Sends a keepalive and waits for its echo; returns the instance id that answered.</summary>
+    /// <summary>
+    /// Sends a keepalive and waits for the echo of that keepalive (by seq: a late echo of an
+    /// earlier one, such as the keepalive sent at accept, is not the answer); returns the instance id that answered.
+    /// </summary>
     public async Task<string> KeepaliveAsync(TimeSpan? timeout = null)
     {
         Task<string> t;
+        uint seq;
         lock (_sync)
         {
-            if (_echo.Task.IsCompleted) _echo = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _echo = new(TaskCreationOptions.RunContinuationsAsynchronously);
             t = _echo.Task;
+            seq = _echoFor = ++_seq;
         }
-        Send(ToyWire.KeepalivePacket(++_seq), null);
+        Send(ToyWire.KeepalivePacket(seq), null);
         var done = await Task.WhenAny(t, Task.Delay(timeout ?? TimeSpan.FromSeconds(5)));
         if (done != t) throw new TimeoutException("no keepalive echo");
         return await t;
@@ -228,9 +234,9 @@ public sealed class FakeClient : IDisposable
                     {
                         var id = System.Text.Encoding.UTF8.GetString(ToyWire.PayloadOf(p));
                         _echoes.Enqueue(id);
-                        TaskCompletionSource<string> e;
-                        lock (_sync) e = _echo;
-                        e.TrySetResult(id);
+                        TaskCompletionSource<string>? e;
+                        lock (_sync) e = ToyWire.SeqOf(p) == _echoFor ? _echo : null;
+                        e?.TrySetResult(id);
                         return;
                     }
                     case ToyWire.Retry:

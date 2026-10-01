@@ -37,7 +37,8 @@ public class TravelEndToEndFacts
         foreach (var h in heroes)
         {
             if (!await h.Client.WaitOnInstanceAsync(target, E2eWorld.T))
-                Assert.Fail($"{h.SteamId} never landed on {target}: {string.Join(",", h.Client.Steps.TakeLast(6))}; target {(await w.Instance(target))?.State}; "
+                Assert.Fail($"{h.SteamId} never landed on {target}: {string.Join(",", h.Client.Steps.TakeLast(6))}; target {(await w.Instance(target))?.State} ({(await w.Instance(target))?.Reason}), its sdk err {w.Pods.Game(target)?.Server.Sdk.Session.LastStreamError} "
+                    + $"failures {w.Pods.Game(target)?.Server.Sdk.Metrics.ConnectFailures} acked {w.Pods.Game(target)?.Server.Sdk.Metrics.HeartbeatsAcked}; "
                     + $"source events: {string.Join(" | ", w.Pods.Game(from)?.Server.Events.TakeLast(10) ?? [])}; hops {w.Hops.Seen.Count}; "
                     + $"waiting {w.Travel.Waiting}; stream open {w.Service.Services.GetRequiredService<Descent.Service.Api.InstanceStreams>().IsOpen(from)}; "
                     + $"sdk connected {w.Pods.Game(from)?.Server.Sdk.Session.Connected} err {w.Pods.Game(from)?.Server.Sdk.Session.LastStreamError} "
