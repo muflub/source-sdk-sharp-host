@@ -1,0 +1,134 @@
+# Build, test and publish the Linux build.
+#   every push and PR: make setup, make build, make test, make publish, make pack; the tarballs
+#                      and NuGet packages are uploaded as the workflow artifact `linux-build`
+#   a v* tag:          the same, then a GitHub Release for the tag carrying those files
+#
+# The map tools (source-sdk-map-tools, the only build root) are a private repository, so the
+# checkout needs the repository secret MAPTOOLS_TOKEN: a fine-grained token with read access to
+# Contents on muflub/hl2sdk_tools_sharp. The repository variable MAPTOOLS_REF pins the ref built
+# against (default: main).
+name: linux
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DOTNET: dotnet
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  MSBUILDDISABLENODEREUSE: '1'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: host
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: host
+          fetch-depth: 0
+
+      - name: Require MAPTOOLS_TOKEN
+        env:
+          MAPTOOLS_TOKEN: ${{ secrets.MAPTOOLS_TOKEN }}
+        run: |
+          if [ -z "$MAPTOOLS_TOKEN" ]; then
+            echo "::error::secret MAPTOOLS_TOKEN is not set: the private map tools repository cannot be checked out (see the README, 'CI')"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: muflub/hl2sdk_tools_sharp
+          ref: ${{ vars.MAPTOOLS_REF || 'main' }}
+          token: ${{ secrets.MAPTOOLS_TOKEN }}
+          path: maptools
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: host/global.json
+
+      - name: NativeAOT prerequisites (Host.Launcher)
+        run: sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="$(git rev-parse --short HEAD)"; fi
+          echo "build=$v" >> "$GITHUB_OUTPUT"
+          # NuGet versions: the tag without its leading v; untagged builds keep the projects' default.
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then echo "pack=${v#v}" >> "$GITHUB_OUTPUT"; fi
+          echo "version $v, map tools $(git -C ../maptools log --oneline -1)"
+
+      - name: Setup (roots.props, restore)
+        run: make setup MAPTOOLS_ROOT=../maptools
+
+      - name: Build
+        run: make build CONFIG=Release
+
+      - name: Test
+        run: |
+          set -o pipefail
+          MSBUILDDISABLENODEREUSE=1 dotnet test Host.slnx --nologo -m:1 -c Release \
+            --logger trx --results-directory "$GITHUB_WORKSPACE/test-results"
+          make maptools-clean
+
+      - name: Publish (linux-x64)
+        run: make publish TAG=${{ steps.version.outputs.build }}
+
+      - name: Pack (Host.Sdk, Host.Contracts)
+        run: make pack PACK_VERSION=${{ steps.version.outputs.pack }}
+
+      - name: Collect
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp bin/dist/* bin/nupkg/*.nupkg "$GITHUB_WORKSPACE/out/"
+          ls -l "$GITHUB_WORKSPACE/out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: out/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results/
+          if-no-files-found: ignore
+
+  release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: out
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
