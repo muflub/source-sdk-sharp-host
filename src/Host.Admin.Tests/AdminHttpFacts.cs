@@ -109,7 +109,13 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
     {
         await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "descent-lvl-1", "uid",
             "127.0.0.1", 27015, "hash", null, null, "fake", 1, tx.Now, null, null, null, null, null, null, null, 0, 27015)));
-        _host.App.Services.GetRequiredService<AdminUiOptions>().DevApiPort = AdminFreePort();
+        // The discard port: below the ephemeral range, so no port-0 listener or outgoing connection in
+        // the suite can take it (a picked-and-released ephemeral port could be taken meanwhile and answer).
+        const int port = 9;
+        using (var probe = new System.Net.Sockets.TcpClient())
+            Assert.Equal(System.Net.Sockets.SocketError.ConnectionRefused,
+                Assert.Throws<System.Net.Sockets.SocketException>(() => probe.Connect(IPAddress.Loopback, port)).SocketErrorCode);
+        _host.App.Services.GetRequiredService<AdminUiOptions>().DevApiPort = port;
         using var http = Admin();
         var r = await http.GetAsync("/admin/instances/lvl-1/devapi/index.html");
         Assert.Equal(HttpStatusCode.NotImplemented, r.StatusCode);
@@ -154,12 +160,5 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
         using var http = Admin();
         Assert.Equal("nav", await http.GetStringAsync("/admin/levels/aa/file.nav3d"));
         Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/admin/levels/aa/file.exe")).StatusCode);
-    }
-
-    static int AdminFreePort()
-    {
-        using var l = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        l.Start();
-        return ((IPEndPoint)l.LocalEndpoint).Port;
     }
 }
