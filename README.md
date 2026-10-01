@@ -42,8 +42,8 @@ Requirements:
   The Makefile uses `~/.dotnet/dotnet`; pass `DOTNET=dotnet` to use another install.
 - `git` and `make`.
 - `clang` and `zlib1g-dev` only for `make publish` (`Host.Launcher` is NativeAOT).
-- Read access to [`source-sdk-map-tools`](https://github.com/muflub/hl2sdk_tools_sharp), the one
-  build-time dependency, referenced as a library.
+- [`source-sdk-map-tools`](https://github.com/muflub/hl2sdk_tools_sharp), the one build-time
+  dependency, referenced as a library (`make setup` clones it).
 
 ```sh
 make setup                # clone ../source-sdk-map-tools if missing, write roots.props, restore
@@ -136,14 +136,10 @@ Pushing a tag `v*` (for example `v0.1.0`) does the same and then creates a GitHu
 tag with the tarballs, `SHA256SUMS` and the NuGet packages attached, the packages versioned from
 the tag. A tag with a `-` suffix (`v0.2.0-rc1`) is marked as a prerelease.
 
-The map tools are a private repository, so CI needs one repository secret:
+The map tools ref CI builds against is `main`; set the repository variable `MAPTOOLS_REF` to pin
+another branch, tag or commit.
 
-| setting | kind | value |
-|---|---|---|
-| `MAPTOOLS_TOKEN` | secret | a fine-grained token with read-only **Contents** access to `muflub/hl2sdk_tools_sharp` |
-| `MAPTOOLS_REF` | variable, optional | the map tools ref to build against (default `main`) |
-
-Images push with the workflow's own `GITHUB_TOKEN`; no registry secret is needed. The first
+Images push with the workflow's own `GITHUB_TOKEN`; no secrets are needed. The first
 push creates each package as private: make it public, or link it to this repository, under the
 package's settings on GitHub.
 

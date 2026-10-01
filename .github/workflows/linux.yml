@@ -7,10 +7,9 @@
 #                      (tags `main`, `sha-<short>`) and on v* tags (`<version>`, `latest`).
 #                      The engine image is not built here: it needs licensed engine files.
 #
-# The map tools (source-sdk-map-tools, the only build root) are a private repository, so the
-# checkout needs the repository secret MAPTOOLS_TOKEN: a fine-grained token with read access to
-# Contents on muflub/hl2sdk_tools_sharp. The repository variable MAPTOOLS_REF pins the ref built
-# against (default: main).
+# The map tools (source-sdk-map-tools, the only build root) are the public repository
+# muflub/hl2sdk_tools_sharp, checked out beside this one. The repository variable MAPTOOLS_REF
+# pins the ref built against (default: main).
 name: linux
 
 on:
@@ -46,20 +45,10 @@ jobs:
           path: host
           fetch-depth: 0
 
-      - name: Require MAPTOOLS_TOKEN
-        env:
-          MAPTOOLS_TOKEN: ${{ secrets.MAPTOOLS_TOKEN }}
-        run: |
-          if [ -z "$MAPTOOLS_TOKEN" ]; then
-            echo "::error::secret MAPTOOLS_TOKEN is not set: the private map tools repository cannot be checked out (see the README, 'CI')"
-            exit 1
-          fi
-
       - uses: actions/checkout@v7
         with:
           repository: muflub/hl2sdk_tools_sharp
           ref: ${{ vars.MAPTOOLS_REF || 'main' }}
-          token: ${{ secrets.MAPTOOLS_TOKEN }}
           path: maptools
           persist-credentials: false
 
@@ -139,7 +128,6 @@ jobs:
         with:
           repository: muflub/hl2sdk_tools_sharp
           ref: ${{ vars.MAPTOOLS_REF || 'main' }}
-          token: ${{ secrets.MAPTOOLS_TOKEN }}
           path: maptools
           persist-credentials: false
 
