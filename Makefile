@@ -5,7 +5,7 @@ SHELL := /bin/bash
 DOTNET        ?= $(HOME)/.dotnet/dotnet
 CONFIG        ?= Debug
 MAPTOOLS_ROOT ?= ../source-sdk-map-tools
-MAPTOOLS_REPO ?= https://github.com/muflub/hl2sdk_tools_sharp.git
+MAPTOOLS_REPO ?= https://github.com/muflub/source-sdk-sharp-map-tools.git
 # dev only: `make mod-image-dev` packs a mod image from its bin/release/. Not a build root.
 SOURCE_SHARP_ROOT ?= ../source-sdk-sharp
 
@@ -25,7 +25,7 @@ ENGINE_FILES  ?= $(HOME)/.steam/steam/steamapps/common/Source SDK Base 2013 Mult
 TEST_ENV      := MSBUILDDISABLENODEREUSE=1
 SLN           := Host.slnx
 
-.PHONY: setup build test check pack clean run local gateway fake \
+.PHONY: setup build test check pack publish clean run local gateway fake \
         images image-service image-gateway image-engine image-fake \
         cluster-up cluster-down deploy undeploy admin logs mod-image-dev \
         lint-rooms bake link live-h0 live-h4 live-h5 live-h6 live-h7 live-h9 maptools-clean
@@ -55,10 +55,17 @@ maptools-clean:
 	@root=$$(sed -n 's#.*<MapToolsRoot>\(.*\)</MapToolsRoot>.*#\1#p' roots.props); \
 	if [ -n "$$(git -C "$$root" status --porcelain)" ]; then echo "MapToolsRoot $$root is dirty after the build"; exit 1; fi
 
+# PACK_VERSION=1.2.3 stamps the packages (CI passes the release tag); unset, the projects' default.
+PACK_VERSION  ?=
 pack:
-	$(DOTNET) pack src/Host.Contracts/Host.Contracts.csproj -c Release -o bin/nupkg --nologo -v q
-	$(DOTNET) pack src/Host.Sdk/Host.Sdk.csproj -c Release -o bin/nupkg --nologo -v q
+	$(DOTNET) pack src/Host.Contracts/Host.Contracts.csproj -c Release -o bin/nupkg --nologo -v q $(if $(PACK_VERSION),-p:Version=$(PACK_VERSION))
+	$(DOTNET) pack src/Host.Sdk/Host.Sdk.csproj -c Release -o bin/nupkg --nologo -v q $(if $(PACK_VERSION),-p:Version=$(PACK_VERSION))
 	DOTNET=$(DOTNET) deploy/pack-check.sh
+
+# The Linux build: linux-x64 publishes of the executables, tarred into bin/dist (CI uploads these).
+publish:
+	DOTNET=$(DOTNET) BUILD_VERSION=$(TAG) deploy/publish-linux.sh
+	@$(MAKE) --no-print-directory maptools-clean
 
 run:
 	$(DOTNET) run --project src/Descent.Service

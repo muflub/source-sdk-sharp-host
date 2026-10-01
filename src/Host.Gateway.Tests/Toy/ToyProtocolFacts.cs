@@ -147,3 +147,37 @@ public class ToyBackendFacts
         Assert.Equal(["q", "A", "k", "B inst-a", "retry", "q", "A", "k", "B inst-a"], c.Steps);
     }
 }
+
+public class FakeClientFacts
+{
+    static readonly TimeSpan T = TimeSpan.FromSeconds(5);
+
+    [Fact]
+    public async Task A_late_echo_of_an_earlier_keepalive_does_not_answer_KeepaliveAsync()
+    {
+        // ConnectAsync's own post-accept keepalive can still be in flight when a fact calls
+        // KeepaliveAsync; its echo is not the answer to the new keepalive (TableFacts' negative
+        // control passed on exactly that stale echo).
+        using var server = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        using var c = new Client((IPEndPoint)server.Client.LocalEndPoint!, 1UL);
+        c.SendKeepalive();
+        var first = await server.ReceiveAsync().WaitAsync(T);
+        var waiting = c.KeepaliveAsync(TimeSpan.FromMilliseconds(500));
+        var second = await server.ReceiveAsync().WaitAsync(T);
+        Assert.NotEqual(ToyWire.SeqOf(first.Buffer), ToyWire.SeqOf(second.Buffer));
+        await server.SendAsync(ToyWire.EchoPacket(ToyWire.SeqOf(first.Buffer), "stale"), first.RemoteEndPoint);
+        await Assert.ThrowsAsync<TimeoutException>(() => waiting);
+    }
+
+    [Fact]
+    public async Task KeepaliveAsync_returns_the_instance_that_echoed_its_own_keepalive()
+    {
+        // The positive arm: the same server echoing the keepalive KeepaliveAsync sent answers it.
+        using var server = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        using var c = new Client((IPEndPoint)server.Client.LocalEndPoint!, 1UL);
+        var waiting = c.KeepaliveAsync(T);
+        var sent = await server.ReceiveAsync().WaitAsync(T);
+        await server.SendAsync(ToyWire.EchoPacket(ToyWire.SeqOf(sent.Buffer), "inst-a"), sent.RemoteEndPoint);
+        Assert.Equal("inst-a", await waiting);
+    }
+}

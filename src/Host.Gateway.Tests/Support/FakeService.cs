@@ -43,6 +43,8 @@ public sealed class FakeService : IAsyncDisposable
     public CancellationTokenSource DropStreams { get; private set; } = new();
     public Func<IdentifyRequest, Task<IdentifyResponse>> OnIdentify { get; set; } =
         _ => Task.FromResult(new IdentifyResponse { Allowed = true });
+    /// <summary>Awaited before a Stats call is recorded, with the call's token (a call held in flight).</summary>
+    public Func<CancellationToken, Task>? BeforeStats { get; set; }
 
     public FakeService()
     {
@@ -113,10 +115,11 @@ public sealed class FakeService : IAsyncDisposable
             return Task.FromResult(new EventAck());
         }
 
-        public override Task<EventAck> Stats(GatewayStats request, ServerCallContext context)
+        public override async Task<EventAck> Stats(GatewayStats request, ServerCallContext context)
         {
+            if (f.BeforeStats is { } before) await before(context.CancellationToken);
             f.Stats.Enqueue(request);
-            return Task.FromResult(new EventAck());
+            return new EventAck();
         }
 
         public override Task<IdentifyResponse> Identify(IdentifyRequest request, ServerCallContext context)

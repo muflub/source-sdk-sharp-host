@@ -86,7 +86,7 @@ public sealed class SdkTcpProxy : IAsyncDisposable
         var a = client.GetStream();
         var b = upstream.GetStream();
         var epoch = Volatile.Read(ref _stallEpoch);
-        try { await Task.WhenAny(Pipe(a, b, epoch), Pipe(b, a, epoch)); }
+        try { await Task.WhenAny(Pipe(a, b, epoch, down: false), Pipe(b, a, epoch, down: true)); }
         catch (Exception) { }
         client.Close();
         // A stalled connection is a partition the service has not noticed: its side stays open.
@@ -103,7 +103,15 @@ public sealed class SdkTcpProxy : IAsyncDisposable
     /// </summary>
     public void Stall() => Interlocked.Increment(ref _stallEpoch);
 
-    async Task Pipe(NetworkStream from, NetworkStream to, int epoch)
+    long _downDelayTicks;
+
+    /// <summary>
+    /// Holds every byte from the service to the SDK for <paramref name="delay"/> before forwarding it
+    /// (a slow but live service: the SDK's own bytes still arrive at once). Zero ends it.
+    /// </summary>
+    public void DelayDown(TimeSpan delay) => Interlocked.Exchange(ref _downDelayTicks, delay.Ticks);
+
+    async Task Pipe(NetworkStream from, NetworkStream to, int epoch, bool down)
     {
         var buffer = new byte[16 * 1024];
         while (true)
@@ -111,6 +119,7 @@ public sealed class SdkTcpProxy : IAsyncDisposable
             var n = await from.ReadAsync(buffer, _stop.Token);
             if (n == 0) return;
             if (Volatile.Read(ref _stallEpoch) > epoch) continue; // swallowed
+            if (down && Interlocked.Read(ref _downDelayTicks) is > 0 and var hold) await Task.Delay(TimeSpan.FromTicks(hold), _stop.Token);
             await to.WriteAsync(buffer.AsMemory(0, n), _stop.Token);
         }
     }

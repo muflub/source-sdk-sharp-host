@@ -21,6 +21,33 @@ public class LifecycleEndToEndFacts
         w.Data.ReadAsync((tx, _) => tx.Audit.Count(new AuditQuery(Action: action, Target: target)));
 
     [Fact]
+    public async Task The_world_starts_when_a_port_it_picked_is_taken_before_the_bind()
+    {
+        // FreePort binds port 0, reads the port and releases it: anything may take it before Kestrel
+        // binds it (another fact's outgoing connection draws from the same ephemeral range). Here a
+        // listener takes the first pick (the game API) in that window.
+        System.Net.Sockets.TcpListener? squatter = null;
+        var picks = 0;
+        int Pick()
+        {
+            var port = TestService.FreePort();
+            if (Interlocked.Increment(ref picks) == 1)
+            {
+                squatter = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+                squatter.Start();
+            }
+            return port;
+        }
+        try
+        {
+            await using var w = await E2eWorld.Start(pickPort: Pick);
+            Assert.True(picks > 3, $"{picks} picks: the taken port was never replaced");
+            Assert.Equal(InstanceState.Live, (await w.Hub())!.State);
+        }
+        finally { squatter?.Stop(); }
+    }
+
+    [Fact]
     public async Task A_level_is_created_goes_live_is_drained_and_reaped_with_its_world_swept()
     {
         await using var w = await E2eWorld.Start();

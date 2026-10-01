@@ -120,11 +120,26 @@ public class EventsFacts
         var hub = rig.Backend("hub");
         rig.SetDefault(hub);
         var c = rig.Client(1);
-        await c.ConnectAsync(T);
+        await rig.ConnectSettled(c, hub);
         rig.Relay.CloseSession(rig.Next(), c.LocalEndPoint.ToString(), "kicked");
         Assert.True(await Rig.Until(() => svc.Sessions.Count == 2));
         Assert.Equal(["opened", "closed"], svc.Sessions.Select(s => s.Kind));
         await ev!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Disposing_with_a_call_in_flight_ends_the_pump_without_throwing()
+    {
+        // The gateway stops while an event call is on the wire: the pump's own cancellation is
+        // the stop, not a failure, so DisposeAsync must not surface the call's Cancelled status.
+        await using var svc = new FakeService();
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        svc.BeforeStats = async ct => { arrived.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); };
+        var ev = new GrpcGatewayEvents(svc.EventsClient, new FakeTimeProvider());
+        ev.Stats(new GatewayStats());
+        await arrived.Task.WaitAsync(T);
+        await ev.DisposeAsync();
+        Assert.Equal(0, ev.Delivered);
     }
 
     [Fact]

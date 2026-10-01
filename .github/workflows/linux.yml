@@ -1,0 +1,190 @@
+# Build, test and publish the Linux build.
+#   every push and PR: make setup, make build, make test, make publish, make pack; the tarballs
+#                      and NuGet packages are uploaded as the workflow artifact `linux-build`
+#   a v* tag:          the same, then a GitHub Release for the tag carrying those files
+#   container images:  service, gateway and fake (deploy/Dockerfile.*), built on every run once
+#                      the tests pass; pushed to ghcr.io/<owner>/descent-<image> on main
+#                      (tags `main`, `sha-<short>`) and on v* tags (`<version>`, `latest`).
+#                      The engine image is not built here: it needs licensed engine files.
+#
+# The map tools (source-sdk-map-tools, the only build root) are the public repository
+# muflub/source-sdk-sharp-map-tools, checked out beside this one. The repository variable MAPTOOLS_REF
+# pins the ref built against (default: main).
+name: linux
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DOTNET: dotnet
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  MSBUILDDISABLENODEREUSE: '1'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: host
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: host
+          fetch-depth: 0
+
+      - uses: actions/checkout@v7
+        with:
+          repository: muflub/source-sdk-sharp-map-tools
+          ref: ${{ vars.MAPTOOLS_REF || 'main' }}
+          path: maptools
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: host/global.json
+
+      - name: NativeAOT prerequisites (Host.Launcher)
+        run: sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="$(git rev-parse --short HEAD)"; fi
+          echo "build=$v" >> "$GITHUB_OUTPUT"
+          # NuGet versions: the tag without its leading v; untagged builds keep the projects' default.
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then echo "pack=${v#v}" >> "$GITHUB_OUTPUT"; fi
+          echo "version $v, map tools $(git -C ../maptools log --oneline -1)"
+
+      - name: Setup (roots.props, restore)
+        run: make setup MAPTOOLS_ROOT=../maptools
+
+      - name: Build
+        run: make build CONFIG=Release
+
+      - name: Test
+        run: |
+          set -o pipefail
+          MSBUILDDISABLENODEREUSE=1 dotnet test Host.slnx --nologo -m:1 -c Release \
+            --logger trx --results-directory "$GITHUB_WORKSPACE/test-results"
+          make maptools-clean
+
+      - name: Publish (linux-x64)
+        run: make publish TAG=${{ steps.version.outputs.build }}
+
+      - name: Pack (Host.Sdk, Host.Contracts)
+        run: make pack PACK_VERSION=${{ steps.version.outputs.pack }}
+
+      - name: Collect
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp bin/dist/* bin/nupkg/*.nupkg "$GITHUB_WORKSPACE/out/"
+          ls -l "$GITHUB_WORKSPACE/out"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-build
+          path: out/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results
+          path: test-results/
+          if-no-files-found: ignore
+
+  images:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [service, gateway, fake]
+    env:
+      PUSH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: host
+
+      - uses: actions/checkout@v7
+        with:
+          repository: muflub/source-sdk-sharp-map-tools
+          ref: ${{ vars.MAPTOOLS_REF || 'main' }}
+          path: maptools
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: env.PUSH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/descent-${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build version
+        id: version
+        working-directory: host
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then echo "build=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else echo "build=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: host
+          file: host/deploy/Dockerfile.${{ matrix.image }}
+          build-contexts: maptools=maptools
+          build-args: BUILD_VERSION=${{ steps.version.outputs.build }}
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-build
+          path: out
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
