@@ -128,6 +128,21 @@ public class EventsFacts
     }
 
     [Fact]
+    public async Task Disposing_with_a_call_in_flight_ends_the_pump_without_throwing()
+    {
+        // The gateway stops while an event call is on the wire: the pump's own cancellation is
+        // the stop, not a failure, so DisposeAsync must not surface the call's Cancelled status.
+        await using var svc = new FakeService();
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        svc.BeforeStats = async ct => { arrived.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); };
+        var ev = new GrpcGatewayEvents(svc.EventsClient, new FakeTimeProvider());
+        ev.Stats(new GatewayStats());
+        await arrived.Task.WaitAsync(T);
+        await ev.DisposeAsync();
+        Assert.Equal(0, ev.Delivered);
+    }
+
+    [Fact]
     public async Task Stats_are_reported_every_stats_interval()
     {
         await using var svc = new FakeService();
