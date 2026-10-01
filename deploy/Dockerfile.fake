@@ -25,10 +25,10 @@ WORKDIR /app
 # The level init container runs this image too (fetch-level.sh needs curl).
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
  && rm -rf /var/lib/apt/lists/*
-COPY deploy/fetch-level.sh /opt/descent/fetch-level.sh
+COPY deploy/fetch-level.sh /opt/sourcesharp/fetch-level.sh
 # The pod's command is the engine image's entrypoint path; here it starts the fake.
-COPY deploy/fake-entrypoint.sh /opt/descent/game-entrypoint.sh
-RUN chmod +x /opt/descent/fetch-level.sh /opt/descent/game-entrypoint.sh
+COPY deploy/fake-entrypoint.sh /opt/sourcesharp/game-entrypoint.sh
+RUN chmod +x /opt/sourcesharp/fetch-level.sh /opt/sourcesharp/game-entrypoint.sh
 COPY --from=build /out /app
 ENV DOTNET_gcServer=0
-ENTRYPOINT ["/opt/descent/game-entrypoint.sh"]
+ENTRYPOINT ["/opt/sourcesharp/game-entrypoint.sh"]

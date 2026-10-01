@@ -51,6 +51,8 @@ public sealed class FakeGameServer : IAsyncDisposable
     volatile bool _hung;
     volatile int _slowMs;
     volatile bool _draining;
+    string? _map;                                                  // the loaded map; changes at a same-process hop
+    string? _changingTo;
     int _stopping;
 
     public FakeGameServer(FakeGameConfig config) => _config = config;
@@ -126,7 +128,7 @@ public sealed class FakeGameServer : IAsyncDisposable
     {
         j["fake"] = new JsonObject
         {
-            ["instance"] = _config.InstanceId, ["booted"] = Boot is not null, ["mapReady"] = MapIsReady,
+            ["instance"] = _sdk?.Endpoint.InstanceId ?? _config.InstanceId, ["map"] = Map, ["booted"] = Boot is not null, ["mapReady"] = MapIsReady,
             ["hung"] = _hung, ["draining"] = _draining,
         };
         if (_hung) j["ok"] = false; // liveness fails as a hung engine's would
@@ -207,7 +209,7 @@ public sealed class FakeGameServer : IAsyncDisposable
     {
         while (!_stop.IsCancellationRequested)
         {
-            var boot = await _sdk.Session.Booting(_config.Map);
+            var boot = await _sdk.Session.Booting(Map);
             if (boot.Ok)
             {
                 Boot = boot.Value;
@@ -222,7 +224,7 @@ public sealed class FakeGameServer : IAsyncDisposable
         }
         while (!_stop.IsCancellationRequested)
         {
-            var ready = await _sdk.Session.MapReady(_config.GamePort, _config.Map);
+            var ready = await _sdk.Session.MapReady(_config.GamePort, Map);
             if (ready.Ok) { MapIsReady = true; Note("map_ready"); return; }
             Note($"map_ready_refused {ready.Refusal!.Error}");
             if (ready.Error != HostError.Unreachable) return;
@@ -231,6 +233,7 @@ public sealed class FakeGameServer : IAsyncDisposable
     }
 
     bool IsHub => Boot?.InstanceKind == "hub";
+    public string Map => _map ?? _config.Map;
 
     // ------------------------------------------------------------------ players
 
@@ -356,13 +359,32 @@ public sealed class FakeGameServer : IAsyncDisposable
         c.Shutdown += s => { Note($"shutdown {s.Reason}"); _ = Task.Run(() => StopAsync(0)); };
     }
 
-    /// <summary>The hop (§6.5): the player's last checkpoint and release here, and only then HopReady.</summary>
+    /// <summary>
+    /// The hop (§6.5): the player's last checkpoint and release here, and only then HopReady.
+    /// Same-process (D-H13 local mode): the whole process changes map, so every player is put
+    /// first; then the map changes and, booted as the target, the players join again.
+    /// </summary>
     async Task PrepareHop(HopRequest hop)
     {
-        Note($"prepare_hop {hop.SteamId} {hop.TargetInstance}");
-        if (_players.TryGetValue(hop.SteamId, out var p)) await Put(p);
+        Note($"prepare_hop {hop.SteamId} {hop.TargetInstance}{(hop.IsSameProcess ? $" same_process {hop.Map}" : "")}");
+        if (hop.IsSameProcess) foreach (var each in _players.Values.ToList()) await Put(each);
+        else if (_players.TryGetValue(hop.SteamId, out var p)) await Put(p);
         var r = await hop.Ready();
         Note($"hop_ready {hop.SteamId} {(r.Ok ? "ok" : r.Refusal!.Reason)}");
+        if (r.Ok && hop.IsSameProcess && _changingTo != hop.Map) await ChangeMap(hop.Map);
+    }
+
+    /// <summary>What the game's changelevel does here: load the map, boot as whoever the SDK now is, take the players back.</summary>
+    async Task ChangeMap(string map)
+    {
+        _changingTo = map;
+        Note($"changelevel {map}");
+        _map = map;
+        Boot = null;
+        MapIsReady = false;
+        await BootAsync();
+        if (!MapIsReady) return;
+        foreach (var p in _players.Values.ToList()) await (p.Joining = JoinCore(p));
     }
 
     // ------------------------------------------------------------------ control (called through OnMain)

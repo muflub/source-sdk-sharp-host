@@ -151,7 +151,7 @@ public sealed class MapPoolWorkerFacts
         Assert.False(r.Ready);
         Assert.Contains("no ready level", r.Waiting);
         var job = Assert.Single(await h.Jobs(MapJobState.Queued));
-        Assert.Equal((0, MapPoolWorker.LinkJobKey("descent", 2, (await h.Catalog.MatrixAsync("descent")).Rows[0].PackId, 0)), (job.Priority, job.Key));
+        Assert.Equal((0, MapPoolWorker.LinkJobKey("tf2_descent", 2, (await h.Catalog.MatrixAsync("tf2_descent")).Rows[0].PackId, 0)), (job.Priority, job.Key));
     }
 
     [Fact]
@@ -214,7 +214,7 @@ public sealed class MapPoolWorkerFacts
         await h.Fill();
         var v2 = await h.Upload();
         Assert.Equal(0, await h.Ready(1, v2.Id));
-        await h.Catalog.ActivateAsync("descent", [1], v2.Id, "admin");
+        await h.Catalog.ActivateAsync("tf2_descent", [1], v2.Id, "admin");
         await h.Fill();
         Assert.Equal(2, await h.Ready(1, v2.Id));
     }
@@ -226,7 +226,7 @@ public sealed class MapPoolWorkerFacts
         var v1 = await h.UploadAndActivate();
         await h.Fill();
         var v2 = await h.Upload();
-        await h.Catalog.ActivateAsync("descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Drain);
+        await h.Catalog.ActivateAsync("tf2_descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Drain);
         var r = await h.Worker.RequestLevelAsync(1, "inst-a");
         Assert.Equal(v1.Id, r.Level!.PackId);
     }
@@ -238,7 +238,7 @@ public sealed class MapPoolWorkerFacts
         var v1 = await h.UploadAndActivate();
         await h.Fill();
         var v2 = await h.Upload();
-        await h.Catalog.ActivateAsync("descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Drain);
+        await h.Catalog.ActivateAsync("tf2_descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Drain);
         Assert.Equal(2, await h.Ready(1, v1.Id));
         await h.Fill();
         await h.Worker.PlanAsync();
@@ -252,7 +252,7 @@ public sealed class MapPoolWorkerFacts
         await h.UploadAndActivate();
         await h.Fill();
         var v2 = await h.Upload();
-        await h.Catalog.ActivateAsync("descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Retire);
+        await h.Catalog.ActivateAsync("tf2_descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Retire);
         Assert.False((await h.Worker.RequestLevelAsync(1, "inst-a")).Ready);
         Assert.All(await h.Jobs(MapJobState.Queued), j => Assert.Equal(0, j.Priority));
     }
@@ -264,7 +264,7 @@ public sealed class MapPoolWorkerFacts
         var v1 = await h.UploadAndActivate();
         await h.Worker.PlanAsync();
         var v2 = await h.Upload();
-        await h.Catalog.ActivateAsync("descent", [1], v2.Id, "admin");
+        await h.Catalog.ActivateAsync("tf2_descent", [1], v2.Id, "admin");
         await h.Worker.RunPendingAsync();
         Assert.Equal(0, await h.Ready(1, v1.Id));
         Assert.Empty(h.Compiler.Links);
@@ -277,10 +277,10 @@ public sealed class MapPoolWorkerFacts
         await using var h = new PoolHarness(depths: 1, k: 1);
         var v1 = await h.UploadAndActivate();
         var v2 = await h.Upload();
-        await h.Catalog.ActivateAsync("descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Retire);
+        await h.Catalog.ActivateAsync("tf2_descent", [1], v2.Id, "admin", policy: OldLevelsPolicy.Retire);
         await h.Fill();
         Assert.Equal(1, await h.Ready(1, v2.Id));
-        await h.Catalog.RollBackAsync("descent", [1], v1.Id, "admin", OldLevelsPolicy.Retire);
+        await h.Catalog.RollBackAsync("tf2_descent", [1], v1.Id, "admin", OldLevelsPolicy.Retire);
         h.Events.Clear();
         await h.Fill();
         Assert.Equal(1, await h.Ready(1, v1.Id));
@@ -307,8 +307,8 @@ public sealed class MapPoolWorkerFacts
         var lib = Path.Combine(h.Options.MapPool.LibraryPath, "crypt");
         Directory.CreateDirectory(lib);
         await File.WriteAllTextAsync(Path.Combine(lib, "rooms.vmf"), "versioninfo {}");
-        var version = MapIdentity.LibraryVersionOf(new LibrarySource("descent", "crypt", lib));
-        await h.Db.Write(tx => tx.Library.AddPack(new PackRecord(0, "descent", "crypt", 1, "p", version, "bake", "t", tx.Now, 1, "s", null, null, PackState.Ready)));
+        var version = MapIdentity.LibraryVersionOf(new LibrarySource("tf2_descent", "crypt", lib));
+        await h.Db.Write(tx => tx.Library.AddPack(new PackRecord(0, "tf2_descent", "crypt", 1, "p", version, "bake", "t", tx.Now, 1, "s", null, null, PackState.Ready)));
         await h.Worker.PlanAsync();
         Assert.DoesNotContain(await h.Jobs(), j => j.Kind == MapJobKind.Bake);
     }
@@ -365,7 +365,7 @@ public sealed class MapPoolWorkerFacts
             await h.Fill();
             var r = await h.Worker.RequestLevelAsync(1, $"inst-{i}");
             await h.Worker.RetireLevelAsync(r.Level!.Hash);
-            names.Add(MapIdentity.MapName("descent", 1, r.Level.Hash));
+            names.Add(MapIdentity.MapName("tf2_descent", 1, r.Level.Hash));
             h.Db.Clock.Advance(TimeSpan.FromMinutes(1));
         }
         Assert.All(names, n => Assert.True(h.Storage.LevelExists(n)));
@@ -382,7 +382,7 @@ public sealed class MapPoolWorkerFacts
         h.FailWhen = _ => true;
         await h.Fill();
         var failed = (await h.Db.Read(tx => tx.Levels.List(state: LevelState.Failed))).First();
-        var name = MapIdentity.MapName("descent", 1, failed.Hash);
+        var name = MapIdentity.MapName("tf2_descent", 1, failed.Hash);
         Directory.CreateDirectory(h.Storage.LevelsDirectory);
         await File.WriteAllTextAsync(h.Storage.LevelFile(name, ".bsp.bz2"), "x");
         h.Db.Clock.Advance(TimeSpan.FromDays(6));

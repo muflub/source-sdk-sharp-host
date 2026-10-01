@@ -11,7 +11,7 @@ DRIVER="$HOME/.dotnet/dotnet $ROOT/bin/Debug/Host.LiveDriver/SourceSharp.Host.Li
 [ -f "$ROOT/bin/Debug/Host.LiveDriver/SourceSharp.Host.LiveDriver.dll" ] || { log "build Host.LiveDriver first"; exit 2; }
 start_admin
 
-LB=$(kc get svc descent-gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}'):27015
+LB=$(kc get svc tf2-descent-gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}'):27015
 log "gateway LoadBalancer $LB"
 live_hub() { ops instances | json '[i for i in d if i["kind"]=="Hub" and i["state"]=="Live"][0]["podIp"]'; }
 wait_for 120 "a live hub" live_hub

@@ -147,6 +147,7 @@ public static class ModImageContract
         "/game/bin/managed/",
         "/game/bin/dotnet/",
         $"/game/mods/{modName}/",
+        $"/game/mods/{modName}/mod.dedicated.yaml",
         "/bin/sh",
     ];
 

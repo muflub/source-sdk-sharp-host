@@ -26,7 +26,7 @@ Add `bin/nupkg` as a local NuGet source in the sharp repo, then:
 | assembly in the game | references |
 |---|---|
 | the Descent **server** assembly (the code that runs per frame on the dedicated server) | `SourceSharp.Host.Sdk` |
-| the Descent **rules** assembly (`Descent.Rules`, the `IGameRules` implementation) | `SourceSharp.Host.Contracts` only |
+| the Descent **rules** assembly (`TF2.Descent.Rules`, the `IGameRules` implementation) | `SourceSharp.Host.Contracts` only |
 
 Rules that are checked or will bite:
 
@@ -100,7 +100,7 @@ var ready = await sdk.Session.MapReady(boundPort, mapName);   // the port the so
 - Send `MapReady` only when a client could connect. The instance goes `Live` on it and the
   gateway starts routing players.
 - `BootInfo.InstanceSeed` seeds this instance's kill rolls; `Depth` / `LevelHash` say which
-  level this is (the map file is already in `maps/pool/`).
+  level this is (the map file is already in `pool/maps/`, on the search path the mod's gameinfo adds).
 
 On a refusal: retry `HostError.Unreachable` (the host restarted, or a new pod's network is
 not admitted yet — about 2 s on k3s) with a short delay; **log every other refusal loudly
@@ -164,6 +164,22 @@ Order of a hop, for reference: travel call (§7) → service picks/boots the tar
 route flips → `PrepareHop` here → checkpoint + release + `Ready()` → `Retry` here → the client
 reconnects and `PlayerJoined` fires on the target.
 
+**Same-process hop (local mode only).** Hosted, a game process runs one map for its whole life
+and a hop always goes to another pod. A local service with `Instances.LocalTravel = SameProcess`
+(the default for `make local`) instead lets one game go up and down by itself: `PrepareHop` then
+has `h.IsSameProcess` set and `h.Map` names the target's map. The game:
+
+1. checkpoints and releases **every** player (the whole process moves), then `await h.Ready()`
+   (once per player's hop, as usual);
+2. links the target's level files (`h.Target.LevelFiles`; empty for the hub) into
+   `<mod>/pool/maps/` and runs `changelevel h.Map` — no `Retry` comes;
+3. on the new map runs its normal level start: `Booting(h.Map)` then `MapReady`. The SDK
+   becomes the target instance at that `Booting`, so the `BootInfo` (kind, depth, seed) is the
+   target's; then the players join again (`PlayerJoined`, `Lease`) as on any level.
+
+`Booting` with any other map stays the current instance. The instance the process left is
+reaped when its stream closes, never counted as a crash.
+
 ## 7. Items, kills, travel
 
 - **Kill drop (the hot path, no I/O):** roll with your rules (`KillRoll(info.InstanceSeed,
@@ -190,11 +206,11 @@ The SDK reads these itself; the game only needs `HostSdk.StartAsync()`.
 
 | input | value |
 |---|---|
-| args | `-game <modDir> -console -port 27015 -ip 0.0.0.0 +maxplayers N +map <map> +descent_instance <id>` |
-| `DESCENT_SERVICE` | the game API (gRPC h2c) |
-| `DESCENT_INSTANCE_ID`, `DESCENT_INSTANCE_TOKEN` | who this instance is (the token comes from a per-pod Secret) |
-| `DESCENT_SIDECAR_INFO` | the launcher's peer-info endpoint on loopback (default `127.0.0.1:5011`) |
-| `DESCENT_MOD` | the mod name (`descent`) |
+| args | `-game <modDir> -console -port 27015 -ip 0.0.0.0 +maxplayers N +map <map>` |
+| `SOURCESHARP_HOST_SERVICE` | the game API (gRPC h2c) |
+| `SOURCESHARP_HOST_INSTANCE_ID`, `SOURCESHARP_HOST_INSTANCE_TOKEN` | who this instance is (the token comes from a per-pod Secret) |
+| `SOURCESHARP_HOST_SIDECAR_INFO` | the launcher's peer-info endpoint on loopback (default `127.0.0.1:5011`) |
+| `SOURCESHARP_MOD` | the mod name (`tf2_descent`), for SourceSharp's Bootstrap |
 
 The mod image layout (where the server assembly and the SDK DLLs go) is `docs/mod-image.md`.
 
@@ -202,10 +218,14 @@ The mod image layout (where the server assembly and the SDK DLLs go) is `docs/mo
 
 | mode | how |
 |---|---|
-| a real local service | `make local` in this repo, then start the game with `-hostlocal bin/local/local-host.json` (or `DESCENT_LOCAL=<file>`) |
-| the service inside the game process (dev builds only) | ship `SourceSharp.Host.Local` beside the game in a dev build and start with `-hostlocal inproc` (data in `./descent-local/`). A release build omits that DLL; the SDK then says so instead of starting. |
+| a real local service | `make local` in this repo, then start the game with `-hostlocal bin/local/local-host.json` (or `SOURCESHARP_HOST_LOCAL=<file>`) |
+| the service inside the game process (dev builds only) | ship `SourceSharp.Host.Local` beside the game in a dev build and start with `-hostlocal inproc` (data in `./sourcesharp-local/`). A release build omits that DLL; the SDK then says so instead of starting. |
 
-Both connect exactly as a pod does, so everything above runs unchanged.
+Both connect exactly as a pod does, so everything above runs unchanged. With
+`Instances.LocalTravel = Process` each level is its own game process instead: start it from
+`bin/local/local-level-<id>.json` with `-hostlocal <file> +map <map> -port <port>` (the file's
+`map` and `port`; MapReady is compared with that port), after linking its `levelFiles` into
+`<mod>/pool/maps/`.
 
 ## 10. Done when
 
@@ -216,7 +236,7 @@ Both connect exactly as a pod does, so everything above runs unchanged.
    a lease (`/ops/leases`) and a session bound to its SteamID (`/ops/sessions`).
 3. **Hops:** a descent moves the player to a level pod and back to town, with the character
    leased on the instance they stand on after each hop and the inventory unchanged.
-4. **Survives a restart:** `kubectl rollout restart statefulset/descent-service` while
+4. **Survives a restart:** `kubectl rollout restart statefulset/tf2-descent-service` while
    playing; the instance is adopted (`instance.adopted`), the player stays connected.
 
 Then the `TIER=real` live gates and the packet captures (`docs/net-protocol.md`) can run.

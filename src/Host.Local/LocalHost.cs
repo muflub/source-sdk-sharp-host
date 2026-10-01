@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
-using Descent.Service;
+using TF2.Descent.Service;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 

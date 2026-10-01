@@ -49,14 +49,14 @@ public class LauncherFacts
     {
         IReadOnlyList<string>? seen = null;
         nint terminator = -1;
-        LauncherApp.Run(NoChdir, Loopback(), "/opt/descent/launcher", ["-game", "hl2mp", "+map", "dm_lockdown", "+hostname", "Dëscent"],
+        LauncherApp.Run(NoChdir, Loopback(), "/opt/sourcesharp/launcher", ["-game", "hl2mp", "+map", "dm_lockdown", "+hostname", "Dëscent"],
             new FakeEngine((argc, argv) =>
             {
                 seen = Argv.Read(argc, argv);
                 terminator = Marshal.ReadIntPtr(argv, argc * nint.Size);
                 return 0;
             }), new LauncherEngineState());
-        Assert.Equal(["/opt/descent/launcher", "-game", "hl2mp", "+map", "dm_lockdown", "+hostname", "Dëscent"], seen);
+        Assert.Equal(["/opt/sourcesharp/launcher", "-game", "hl2mp", "+map", "dm_lockdown", "+hostname", "Dëscent"], seen);
         Assert.Equal(0, terminator);
     }
 

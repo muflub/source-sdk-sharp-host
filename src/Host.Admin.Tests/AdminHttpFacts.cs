@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
-using Descent.Service;
+using TF2.Descent.Service;
 using Microsoft.Extensions.DependencyInjection;
 using SourceSharp.Host.Abstractions;
 using SourceSharp.Host.Testing;
@@ -47,7 +47,7 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
     {
         var form = new MultipartFormDataContent();
         if (token is not null) form.Add(new StringContent(token), "__RequestVerificationToken");
-        form.Add(new StringContent("descent"), "mod");
+        form.Add(new StringContent("tf2_descent"), "mod");
         form.Add(new StringContent("crypt"), "library");
         form.Add(new StringContent("{}"), "libraryJson");
         form.Add(new ByteArrayContent(pack), "pack", "crypt.roompack");
@@ -63,7 +63,7 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
         using var http = Admin();
         var r = await http.PostAsync("/admin/packs/upload", Form(null, FakePack.Bytes("crypt", ["start", "stairs"])));
         Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-        Assert.Empty(await W.D.Read(tx => tx.Library.Packs("descent")));
+        Assert.Empty(await W.D.Read(tx => tx.Library.Packs("tf2_descent")));
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
         using var http = Admin();
         var r = await http.PostAsync("/admin/packs/upload", Form("forged", FakePack.Bytes("crypt", ["start", "stairs"])));
         Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-        Assert.Empty(await W.D.Read(tx => tx.Library.Packs("descent")));
+        Assert.Empty(await W.D.Read(tx => tx.Library.Packs("tf2_descent")));
     }
 
     [Fact]
@@ -89,7 +89,7 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Redirect, r.StatusCode);
         Assert.Contains("ok%3A%20accepted", r.Headers.Location!.ToString());
-        var pack = Assert.Single(await W.D.Read(tx => tx.Library.Packs("descent")));
+        var pack = Assert.Single(await W.D.Read(tx => tx.Library.Packs("tf2_descent")));
         Assert.Equal((PackState.Ready, 1), (pack.State, pack.Version));
         Assert.Equal("admin@localhost", Assert.Single(await W.Audit("pack.upload")).Actor);
     }
@@ -107,7 +107,7 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
     [Fact]
     public async Task The_devapi_proxy_answers_501_with_the_reason_when_the_pod_is_not_reachable()
     {
-        await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "descent-lvl-1", "uid",
+        await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "sourcesharp-lvl-1", "uid",
             "127.0.0.1", 27015, "hash", null, null, "fake", 1, tx.Now, null, null, null, null, null, null, null, 0, 27015)));
         // The discard port: below the ephemeral range, so no port-0 listener or outgoing connection in
         // the suite can take it (a picked-and-released ephemeral port could be taken meanwhile and answer).
@@ -148,7 +148,7 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
     [Fact]
     public async Task The_devapi_proxy_forwards_a_get_to_the_pods_port()
     {
-        await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "descent-lvl-1", "uid",
+        await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "sourcesharp-lvl-1", "uid",
             "127.0.0.1", 27015, "hash", null, null, "fake", 1, tx.Now, null, null, null, null, null, null, null, 0, 27015)));
         // The "pod" is this service's own admin listener: /admin/audit through the proxy is the page itself.
         _host.App.Services.GetRequiredService<AdminUiOptions>().DevApiPort = new Uri(Admin().BaseAddress!.ToString()).Port;
@@ -179,7 +179,7 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
         await W.D.Write(tx => tx.Levels.Add(new LevelRecord("aa", 1, 2, "crypt", 1, 0, LevelState.Ready, tx.Now, null, 10, null, "fake")));
         var storage = W.Catalog.Storage;
         Directory.CreateDirectory(storage.LevelsDirectory);
-        await File.WriteAllTextAsync(storage.LevelFile(MapIdentity.MapName("descent", 2, "aa"), ".nav3d"), "nav");
+        await File.WriteAllTextAsync(storage.LevelFile(MapIdentity.MapName("tf2_descent", 2, "aa"), ".nav3d"), "nav");
         using var http = Admin();
         Assert.Equal("nav", await http.GetStringAsync("/admin/levels/aa/file.nav3d"));
         Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/admin/levels/aa/file.exe")).StatusCode);

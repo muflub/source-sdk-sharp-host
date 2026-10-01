@@ -15,7 +15,8 @@
 ./game/bin/dotnet/
 ./game/bin/dotnet/dotnet
 ./game/mods/
-./game/mods/descent/
-./game/mods/descent/gameinfo.txt
-./game/mods/descent/maps/
-./game/mods/descent/maps/descent_town.bsp
+./game/mods/tf2_descent/
+./game/mods/tf2_descent/gameinfo.txt
+./game/mods/tf2_descent/mod.dedicated.yaml
+./game/mods/tf2_descent/maps/
+./game/mods/tf2_descent/maps/tf2_descent_town.bsp

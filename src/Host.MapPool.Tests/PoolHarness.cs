@@ -39,7 +39,7 @@ public sealed class FakeBaker(ConcurrentQueue<string> events) : IBakeLauncher
 /// <summary>The pool on the real stores (SQLite :memory:), the fake compiler, the fake validator and a fake clock.</summary>
 public sealed class PoolHarness : IAsyncDisposable
 {
-    public const string Mod = "descent", Lib = "crypt";
+    public const string Mod = "tf2_descent", Lib = "crypt";
     public TestData Db { get; } = new();
     public ServiceOptions Options { get; }
     public FakeMapCompiler Compiler { get; } = new();

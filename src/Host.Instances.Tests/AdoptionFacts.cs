@@ -73,20 +73,20 @@ public class AdoptionFacts
     public async Task Labelled_pod_without_a_row_is_deleted()
     {
         await using var h = new ManagerHarness();
-        var orphan = h.Pods.Seed("descent-level-orphan", GameLabels("01ORPHAN"));
+        var orphan = h.Pods.Seed("sourcesharp-level-orphan", GameLabels("01ORPHAN"));
         await h.M.Start();
-        Assert.Contains($"delete descent-level-orphan {orphan.Uid} 60s", h.Log);
-        Assert.Equal(1, await h.D.Read(tx => tx.Audit.Count(new AuditQuery(Action: "instance.orphan_deleted", Target: "descent-level-orphan"))));
+        Assert.Contains($"delete sourcesharp-level-orphan {orphan.Uid} 60s", h.Log);
+        Assert.Equal(1, await h.D.Read(tx => tx.Audit.Count(new AuditQuery(Action: "instance.orphan_deleted", Target: "sourcesharp-level-orphan"))));
     }
 
     [Fact]
     public async Task Pod_without_the_game_label_is_never_touched()
     {
         await using var h = new ManagerHarness();
-        h.Pods.Seed("descent-service-0", new Dictionary<string, string> { ["app"] = "descent-service" });
+        h.Pods.Seed("tf2-descent-service-0", new Dictionary<string, string> { ["app"] = "tf2-descent-service" });
         await h.M.Start();
         Assert.DoesNotContain(h.Log, l => l.StartsWith("delete", StringComparison.Ordinal));
-        Assert.NotNull(h.Pods.Get("descent-service-0"));
+        Assert.NotNull(h.Pods.Get("tf2-descent-service-0"));
     }
 
     [Fact]

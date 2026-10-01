@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package descent.host.v1;
+package sourcesharp.host.v1;
 
 import "common.proto";
 
@@ -58,7 +58,10 @@ message Drain { string reason = 1; }
 message Kick { string steamid = 1; string reason = 2; }
 message Shutdown { string reason = 1; }
 message Retry { string steamid = 1; }
-message PrepareHop { string steamid = 1; string hop_id = 2; string target_instance = 3; }
+// map: the target's map. local_connection: only from a local service in same-process travel
+// (D-H13): the target instance's connection record (HostLocalFile JSON). The game changes map
+// itself and the SDK reconnects as the target when the game boots that map.
+message PrepareHop { string steamid = 1; string hop_id = 2; string target_instance = 3; string map = 4; string local_connection = 5; }
 message Say { string text = 1; }
 message Exec { string command = 1; }
 message LeaseRevoked { string character_id = 1; string reason = 2; }

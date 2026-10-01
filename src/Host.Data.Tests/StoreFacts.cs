@@ -185,11 +185,11 @@ public class PoolStoreFacts
     public async Task Pack_versions_count_up_per_mod_and_library()
     {
         await using var d = new TestData();
-        PackRecord Pack(string lib, int v) => new(0, "descent", lib, v, "p", "lv", "upload", "admin", d.Clock.GetUtcNow(), 1, "sha", null, null, PackState.Ready);
-        Assert.Equal(1, await d.Read(tx => tx.Library.NextVersion("descent", "gravel")));
+        PackRecord Pack(string lib, int v) => new(0, "tf2_descent", lib, v, "p", "lv", "upload", "admin", d.Clock.GetUtcNow(), 1, "sha", null, null, PackState.Ready);
+        Assert.Equal(1, await d.Read(tx => tx.Library.NextVersion("tf2_descent", "gravel")));
         await d.Write(tx => tx.Library.AddPack(Pack("gravel", 1)));
         await d.Write(tx => tx.Library.AddPack(Pack("gravel", 2)));
-        Assert.Equal((3, 1), (await d.Read(tx => tx.Library.NextVersion("descent", "gravel")), await d.Read(tx => tx.Library.NextVersion("descent", "brick"))));
+        Assert.Equal((3, 1), (await d.Read(tx => tx.Library.NextVersion("tf2_descent", "gravel")), await d.Read(tx => tx.Library.NextVersion("tf2_descent", "brick"))));
     }
 }
 

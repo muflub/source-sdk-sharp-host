@@ -8,7 +8,7 @@ namespace SourceSharp.Host.MapPool;
 /// DI for the pool. The composition root registers what it owns first: <see cref="IHostData"/>,
 /// <see cref="ServiceOptions"/>, <see cref="TimeProvider"/>, <see cref="IRulesProvider"/>,
 /// <see cref="IPoolDemand"/>, <see cref="IMapCompiler"/> and <see cref="IPackValidator"/>
-/// (Descent.MapForge's), and optionally <see cref="IBakeLauncher"/>.
+/// (TF2.Descent.MapForge's), and optionally <see cref="IBakeLauncher"/>.
 /// </summary>
 public static class MapPoolServices
 {

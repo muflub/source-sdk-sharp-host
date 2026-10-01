@@ -63,4 +63,19 @@ public partial class ManagedOnlySdkFacts
         var usesProto = RepoFiles.Sources("Host.FakeGame").Where(f => File.ReadAllText(f).Contains("SourceSharp.Host.Proto")).ToList();
         Assert.Empty(usesProto);
     }
+
+    static string PackageVersion(string project)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(Csproj(project)), "<Version>([^<]+)</Version>");
+        Assert.True(m.Success, $"{project}.csproj has no <Version>: it would pack as 1.0.0 whatever the code says");
+        return m.Groups[1].Value;
+    }
+
+    [Fact]
+    public void The_sdk_package_version_is_the_sdk_version() =>
+        Assert.Equal(HostSdk.Version, PackageVersion("Host.Sdk"));
+
+    [Fact]
+    public void The_contracts_package_version_is_the_contract_version() =>
+        Assert.Equal(SourceSharp.Host.Contracts.HostContract.Version, PackageVersion("Host.Contracts"));
 }

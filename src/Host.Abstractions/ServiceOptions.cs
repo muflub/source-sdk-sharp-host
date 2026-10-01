@@ -3,7 +3,7 @@ using System.Net;
 namespace SourceSharp.Host.Abstractions;
 
 /// <summary>
-/// The service's configuration (plan H1c): appsettings.json + DESCENT_* environment, bound at the root,
+/// The service's configuration (plan H1c): appsettings.json + SOURCESHARP_SERVICE_* environment, bound at the root,
 /// validated on start. Runtime-editable values (ModImage, pool K, timers, caps) are
 /// overridden from the settings store, never written back to the file.
 /// </summary>
@@ -41,8 +41,8 @@ public sealed class TravelOptions
 public sealed class ModOptions
 {
     /// <summary>The mod id: map names are "&lt;Name&gt;-&lt;depth&gt;-&lt;hash&gt;" and a mod image's label must equal it.</summary>
-    public string Name { get; set; } = "descent";
-    public string TownMap { get; set; } = "descent_town";
+    public string Name { get; set; } = "tf2_descent";
+    public string TownMap { get; set; } = "tf2_descent_town";
 }
 
 public sealed class ListenOptions
@@ -56,7 +56,7 @@ public sealed class ListenOptions
     /// <summary>The public fastdl listener: *.bsp.bz2 and nothing else (Q18).</summary>
     public string FastDl { get; set; } = "0.0.0.0:5004";
     /// <summary>The gateway's control endpoint, as the service dials it.</summary>
-    public string GatewayControl { get; set; } = "http://descent-gateway-control:5003";
+    public string GatewayControl { get; set; } = "http://tf2-descent-gateway-control:5003";
 }
 
 public sealed class ImageRef
@@ -96,12 +96,19 @@ public sealed class InstanceOptions
     public Dictionary<string, string> ExtraEnv { get; set; } = [];
     /// <summary>"Kubernetes" (production), or "Local" (D-H13: no pods; the developer's game connects with a connection file).</summary>
     public string Host { get; set; } = "Kubernetes";
+    /// <summary>
+    /// Local mode's level travel (D-H13): "SameProcess" (one game goes up and down by itself: the
+    /// hop's target is served by the requesting process, which changes map and becomes the target
+    /// instance) or "Process" (each instance is its own game process, started from its file).
+    /// Hosted, a process never changes map; this is ignored unless Host is Local.
+    /// </summary>
+    public string LocalTravel { get; set; } = "SameProcess";
     /// <summary>Local mode: where the connection files (local-host.json, local-level-&lt;id&gt;.json) are written.</summary>
     public string LocalDir { get; set; } = "bin/local";
 
-    public string Namespace { get; set; } = "descent";
+    public string Namespace { get; set; } = "tf2-descent";
     /// <summary>This repo's engine image (srcds + entrypoint), or the fake image in TIER=fake.</summary>
-    public string EngineImage { get; set; } = "descent-engine:latest";
+    public string EngineImage { get; set; } = "sourcesharp-engine:latest";
     /// <summary>The mod image (D-H6): runtime config, never baked into an image.</summary>
     public ImageRef ModImage { get; set; } = new();
     /// <summary>The dedicated-server flag set (§7.1), owned here so the sharp repo can change it without a release.</summary>
@@ -124,9 +131,15 @@ public sealed class InstanceOptions
     public int ReapAfterMissed { get; set; } = 6;
     public string ContentClaim { get; set; } = "content";
     /// <summary>What a pod dials for the game API.</summary>
-    public string ServiceAddress { get; set; } = "descent-service:5001";
+    public string ServiceAddress { get; set; } = "tf2-descent-service:5001";
+    /// <summary>
+    /// The public fastdl root clients download levels from (Q18), e.g. http://maps.example:5004/:
+    /// the client appends maps/&lt;name&gt;.bsp.bz2. Pods get +sv_allowdownload 1 +sv_downloadurl;
+    /// empty (local mode, TIER=fake) leaves both out.
+    /// </summary>
+    public string FastDlUrl { get; set; } = "";
     /// <summary>What a pod's init container fetches levels from (/internal/maps).</summary>
-    public string InternalMapsUrl { get; set; } = "http://descent-service-internal:5000";
+    public string InternalMapsUrl { get; set; } = "http://tf2-descent-service-internal:5000";
     public Dictionary<string, string> NodeSelector { get; set; } = [];
     /// <summary>TIER=fake: the engine image is Host.FakeGame and the mod init container is skipped.</summary>
     public bool SkipModInit { get; set; }
@@ -242,10 +255,16 @@ public static class ServiceOptionsValidator
             errors.Add("Instances.SkipLevelFetch is a TIER=fake setting; refused outside Development");
         if (!development && o.Instances.ExtraEnv.Count > 0)
             errors.Add("Instances.ExtraEnv is a TIER=fake setting; refused outside Development");
+        if (o.Instances.LocalTravel is not ("SameProcess" or "Process"))
+            errors.Add($"Instances.LocalTravel '{o.Instances.LocalTravel}' is not SameProcess or Process");
         if (o.Instances.RelayMode is not ("Interpose" or "Loopback"))
             errors.Add($"Instances.RelayMode '{o.Instances.RelayMode}' is not Interpose or Loopback");
         if (o.Instances.SkipModInit && o.Instances.RelayMode == "Interpose")
             errors.Add("Instances.RelayMode Interpose needs the launcher's hooks; the fake game (SkipModInit) must use Loopback");
+
+        if (o.Instances.FastDlUrl.Length > 0
+            && !(Uri.TryCreate(o.Instances.FastDlUrl, UriKind.Absolute, out var fastDl) && fastDl.Scheme is "http" or "https"))
+            errors.Add($"Instances.FastDlUrl '{o.Instances.FastDlUrl}' is not an absolute http(s) URL");
 
         if (string.IsNullOrWhiteSpace(o.Mod.Name) || o.Mod.Name.Any(c => !(char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '_')))
             errors.Add($"Mod.Name '{o.Mod.Name}' must be lower-case letters, digits or '_'");

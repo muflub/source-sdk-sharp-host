@@ -2,7 +2,7 @@ namespace SourceSharp.Host.Contracts;
 
 /// <summary>
 /// The mod's rules, as the host needs them (plan §1.2, D-H9). Implemented by the mod's
-/// rules module (Descent.Rules in the sharp repo), which the host never compiles against:
+/// rules module (TF2.Descent.Rules in the sharp repo), which the host never compiles against:
 /// the game server's SDK announces the module at boot and the host loads it at run time,
 /// one collectible load context per content hash. Every call is pure: the same inputs give
 /// the same outputs in the game and in the host, which is what makes a replay a check.

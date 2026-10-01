@@ -1,4 +1,4 @@
-using Descent.Service.Ledger;
+using TF2.Descent.Service.Ledger;
 using Microsoft.Extensions.DependencyInjection;
 using SourceSharp.Host.Abstractions;
 using SourceSharp.Host.Contracts;

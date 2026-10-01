@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Descent.Service, published on the ASP.NET runtime image. Build with
+# TF2.Descent.Service, published on the ASP.NET runtime image. Build with
 #   podman build -f deploy/Dockerfile.service --build-context maptools=$(MapToolsRoot) .
 # (make image-service). No game files, no ssmap executable: the map tools are an assembly.
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS build
@@ -17,7 +17,7 @@ COPY . .
 # image's SDK is newer and builds the same net10.0 output.
 RUN rm -f global.json \
  && printf '<Project><PropertyGroup><MapToolsRoot>/maptools/</MapToolsRoot></PropertyGroup></Project>\n' > roots.props \
- && dotnet publish src/Descent.Service/Descent.Service.csproj -c Release -o /out --nologo \
+ && dotnet publish src/TF2.Descent.Service/TF2.Descent.Service.csproj -c Release -o /out --nologo \
       -p:InformationalVersion=$BUILD_VERSION -p:UseAppHost=false
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.12
 ARG BUILD_VERSION=0.0.0-dev
@@ -25,4 +25,4 @@ LABEL org.opencontainers.image.version=$BUILD_VERSION
 WORKDIR /app
 COPY --from=build /out /app
 ENV DOTNET_gcServer=0
-ENTRYPOINT ["dotnet", "/app/Descent.Service.dll"]
+ENTRYPOINT ["dotnet", "/app/TF2.Descent.Service.dll"]

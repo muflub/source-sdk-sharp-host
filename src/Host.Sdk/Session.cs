@@ -55,6 +55,7 @@ internal sealed class HostSession : IHostSession
     volatile int _players;
     volatile float _tickMs;
     bool _everConnected;
+    CancellationTokenSource? _streamCts;
     Task _stream = Task.CompletedTask, _watchdog = Task.CompletedTask, _logFlusher = Task.CompletedTask;
 
     public HostSession(SdkCore core, HostCommands commands)
@@ -127,6 +128,7 @@ internal sealed class HostSession : IHostSession
     {
         var o = _core.Options;
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(_core.Stopping);
+        Volatile.Write(ref _streamCts, cts);
         var acked = false;
         var lastAckTicks = o.Clock.UtcNow.UtcTicks;
         try
@@ -225,6 +227,14 @@ internal sealed class HostSession : IHostSession
 
     public Task<HostResult<BootInfo>> Booting(string map, string? modImageDigest = null) => _core.Background(async () =>
     {
+        // D-H13 same-process hop: the game is booting the target's map, so become the target
+        // first. The stream reopens with the target's credentials; the old instance's stream ends.
+        if (_core.PendingLocalHop is { } hop && hop.Map == map)
+        {
+            _core.Rebind(hop);
+            _core.PendingLocalHop = null;
+            try { Volatile.Read(ref _streamCts)?.Cancel(); } catch (ObjectDisposedException) { }
+        }
         (P.RulesModule announce, IReadOnlyList<(string, string, byte[])> files) prepared;
         try { prepared = ModuleHandshake.Prepare(_core.Options.ModuleSource.Find()); }
         catch (IOException e) { return HostResult<BootInfo>.Refused(new HostRefusal(HostError.ModuleRefused, "module_unreadable", e.Message, Local: true)); }

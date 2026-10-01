@@ -3,13 +3,13 @@
 # through a hostPath PV (the path is filled in by `make deploy`), no content-fill Job.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: descent
+namespace: tf2-descent
 resources:
   - ../base
   - content-pv.yaml
 images:
-  - { name: descent-service, newName: localhost:30500/descent-service, newTag: latest }
-  - { name: descent-gateway, newName: localhost:30500/descent-gateway, newTag: latest }
+  - { name: tf2-descent-service, newName: localhost:30500/tf2-descent-service, newTag: latest }
+  - { name: sourcesharp-gateway, newName: localhost:30500/sourcesharp-gateway, newTag: latest }
 patches:
   - target: { kind: Job, name: content-fill }
     patch: |-
@@ -24,28 +24,28 @@ patches:
         value:
           accessModes: [ReadOnlyMany]
           storageClassName: ""
-          volumeName: descent-content-local
+          volumeName: tf2-descent-content-local
           resources: { requests: { storage: 1Gi } }
-  - target: { kind: StatefulSet, name: descent-service }
+  - target: { kind: StatefulSet, name: tf2-descent-service }
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: { name: ASPNETCORE_ENVIRONMENT, value: Development }
       - op: add
         path: /spec/template/spec/containers/0/env/-
-        value: { name: DESCENT_Instances__EngineImage, value: "localhost:30500/descent-engine:latest" }
+        value: { name: SOURCESHARP_SERVICE_Instances__EngineImage, value: "localhost:30500/sourcesharp-engine:latest" }
       # The mod label check reads the image from its registry; inside a pod "localhost:30500" is
       # the pod itself, not the node's registry, so the check would fail closed. Local only.
       - op: add
         path: /spec/template/spec/containers/0/env/-
-        value: { name: DESCENT_Instances__VerifyModLabel, value: "false" }
+        value: { name: SOURCESHARP_SERVICE_Instances__VerifyModLabel, value: "false" }
       - op: replace
         path: /spec/template/spec/containers/0/resources
         value: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 2Gi } }
       - op: replace
         path: /spec/volumeClaimTemplates/1/spec/resources/requests/storage
         value: 5Gi
-  - target: { kind: Deployment, name: descent-gateway }
+  - target: { kind: Deployment, name: tf2-descent-gateway }
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/resources

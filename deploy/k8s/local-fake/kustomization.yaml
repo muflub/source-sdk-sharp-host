@@ -10,16 +10,16 @@ patches:
   - patch: |-
       apiVersion: apps/v1
       kind: StatefulSet
-      metadata: { name: descent-service }
+      metadata: { name: tf2-descent-service }
       spec:
         template:
           spec:
             containers:
               - name: service
                 env:
-                  - { name: DESCENT_Instances__EngineImage, value: "localhost:30500/descent-fake:latest" }
-                  - { name: DESCENT_Instances__SkipModInit, value: "true" }
-                  - { name: DESCENT_Instances__RelayMode, value: "Loopback" }
-                  - { name: DESCENT_Instances__SkipLevelFetch, value: "true" }
-                  - { name: DESCENT_Instances__ExtraEnv__FAKEGAME_ControlAnyAddress, value: "true" }
-                  - { name: DESCENT_MapPool__DefaultPerDepth, value: "0" }
+                  - { name: SOURCESHARP_SERVICE_Instances__EngineImage, value: "localhost:30500/sourcesharp-fake:latest" }
+                  - { name: SOURCESHARP_SERVICE_Instances__SkipModInit, value: "true" }
+                  - { name: SOURCESHARP_SERVICE_Instances__RelayMode, value: "Loopback" }
+                  - { name: SOURCESHARP_SERVICE_Instances__SkipLevelFetch, value: "true" }
+                  - { name: SOURCESHARP_SERVICE_Instances__ExtraEnv__FAKEGAME_ControlAnyAddress, value: "true" }
+                  - { name: SOURCESHARP_SERVICE_MapPool__DefaultPerDepth, value: "0" }

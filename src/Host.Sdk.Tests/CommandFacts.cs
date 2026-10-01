@@ -1,4 +1,4 @@
-using Descent.Service.Api;
+using TF2.Descent.Service.Api;
 using SourceSharp.Host.Abstractions;
 using P = SourceSharp.Host.Proto;
 

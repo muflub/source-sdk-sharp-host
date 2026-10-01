@@ -11,11 +11,12 @@ recorded on its `instances` row.
 
 | path / property | what | why |
 |---|---|---|
-| `/game/mods.yaml` | the sharp repo's mod table, with an entry whose key is `Mod.Name` (`descent`) | the entrypoint reads `engine.fd_limit` and `env` from it; SourceSharp's Bootstrap reads it to find the mod's assemblies |
+| `/game/mods.yaml` | the sharp repo's mod table, with an entry whose key is `Mod.Name` (`tf2_descent`) | SourceSharp's Bootstrap reads it to find the mod's assemblies |
 | `/game/bin/linux64/` | `server.so`, `libmanaged_host.so` and the other native pieces of the game directory | on `LD_LIBRARY_PATH` after the engine's own `bin/` |
 | `/game/bin/managed/` | the managed assemblies, including the mod's server assemblies and `SourceSharp.Host.Sdk` | the game's server side talks to the host only through the SDK |
 | `/game/bin/dotnet/` | the private .NET runtime the game hosts | the engine image carries no .NET |
-| `/game/mods/<Mod.Name>/` | the mod's game directory (`gameinfo.txt`, `maps/`, …) | `-game /game/mods/<Mod.Name>`; levels are overlaid at `maps/pool/` |
+| `/game/mods/<Mod.Name>/` | the mod's game directory (`gameinfo.txt`, `maps/`, …) | `-game /game/mods/<Mod.Name>`; levels are overlaid at `pool/maps/`, which the mod's `gameinfo.txt` adds as a search path (`game \|gameinfo_path\|pool`) so a level loads by its plain name |
+| `/game/mods/<Mod.Name>/mod.dedicated.yaml` | the mod's dedicated settings as `source# -resolve <id> -dedicated` writes them: `mods.yaml`'s defaults and `engine.dedicated` already merged, flat keys `fd_limit`, `restart_exit_code`, `args` (a block list, or `[]`), `env` (a block map, or `{}`), plain scalars only | the entrypoint applies `fd_limit` as `ulimit -n`, exports `env` and puts `args` before the pod's; a missing file or a line it does not know stops the pod (exit 64 / 65). `restart_exit_code` is source#'s own: pods never restart |
 | `/bin/sh` and `cp` | a shell and coreutils | the init container runs `sh -c "cp -a /game/. /out/"`; a `busybox` base is enough |
 | label `org.sourcesharp.mod=<Mod.Name>` | the mod the image is for | the service refuses to create a pod from an image whose label differs |
 
@@ -61,5 +62,5 @@ contract does not change.
 
 Until the sharp repo publishes one (plan §14.1), `make mod-image-dev
 SOURCE_SHARP_ROOT=../source-sdk-sharp` packs `bin/release/` of that checkout into
-`<registry>/descent-mod:dev` on a `busybox` base with the label above, and reads nothing
+`<registry>/tf2-descent-mod:dev` on a `busybox` base with the label above, and reads nothing
 but this contract.

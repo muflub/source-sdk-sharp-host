@@ -30,12 +30,29 @@ public class ServiceOptionsFacts
         Assert.Contains(Validate(o => o.Listen.Admin = "localhost"), e => e.Contains("not ip:port"));
 
     [Fact]
+    public void Local_travel_is_same_process_or_process() =>
+        Assert.Equal((0, 0, 1), (Validate(o => o.Instances.LocalTravel = "SameProcess").Count, Validate(o => o.Instances.LocalTravel = "Process").Count,
+            Validate(o => o.Instances.LocalTravel = "Teleport").Count(e => e.Contains("LocalTravel"))));
+
+    [Fact]
+    public void An_absolute_http_fastdl_url_is_accepted() =>
+        Assert.Empty(Validate(o => o.Instances.FastDlUrl = "https://maps.example/"));
+
+    [Fact]
+    public void A_relative_fastdl_url_is_refused() =>
+        Assert.Contains(Validate(o => o.Instances.FastDlUrl = "maps.example:5004"), e => e.Contains("FastDlUrl"));
+
+    [Fact]
+    public void A_non_http_fastdl_url_is_refused() =>
+        Assert.Contains(Validate(o => o.Instances.FastDlUrl = "ftp://maps.example/"), e => e.Contains("FastDlUrl"));
+
+    [Fact]
     public void Fake_engine_image_is_refused_outside_development() =>
-        Assert.Contains(Validate(o => o.Instances.EngineImage = "localhost:30500/descent-fake:abc"), e => e.Contains("fake"));
+        Assert.Contains(Validate(o => o.Instances.EngineImage = "localhost:30500/sourcesharp-fake:abc"), e => e.Contains("fake"));
 
     [Fact]
     public void Fake_engine_image_is_accepted_in_development() =>
-        Assert.Empty(Validate(o => o.Instances.EngineImage = "localhost:30500/descent-fake:abc", "Development"));
+        Assert.Empty(Validate(o => o.Instances.EngineImage = "localhost:30500/sourcesharp-fake:abc", "Development"));
 
     [Fact]
     public void Skipping_the_mod_init_container_is_refused_outside_development() =>
@@ -68,10 +85,10 @@ public class ServiceOptionsFacts
     [Fact]
     public void Image_ref_prefers_the_digest_over_the_tag()
     {
-        var r = new ImageRef { Registry = "reg:5000", Name = "descent-mod", Tag = "v1", Digest = "sha256:ab" };
-        Assert.Equal("reg:5000/descent-mod@sha256:ab", r.ToString());
+        var r = new ImageRef { Registry = "reg:5000", Name = "tf2-descent-mod", Tag = "v1", Digest = "sha256:ab" };
+        Assert.Equal("reg:5000/tf2-descent-mod@sha256:ab", r.ToString());
         r.Digest = null;
-        Assert.Equal("reg:5000/descent-mod:v1", r.ToString());
+        Assert.Equal("reg:5000/tf2-descent-mod:v1", r.ToString());
     }
 
     [Fact]

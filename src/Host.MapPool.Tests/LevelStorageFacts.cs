@@ -9,17 +9,17 @@ public sealed class LevelStorageFacts
     [Fact]
     public void A_level_map_name_parses_into_mod_depth_and_hash()
     {
-        Assert.True(LevelStorage.TryParseMapName("descent-7-0123456789abcdef", out var mod, out var depth, out var hash));
-        Assert.Equal(("descent", 7, "0123456789abcdef"), (mod, depth, hash));
+        Assert.True(LevelStorage.TryParseMapName("tf2_descent-7-0123456789abcdef", out var mod, out var depth, out var hash));
+        Assert.Equal(("tf2_descent", 7, "0123456789abcdef"), (mod, depth, hash));
     }
 
     [Theory]
-    [InlineData("descent_town")]
-    [InlineData("descent-7-0123456789ABCDEF")]
-    [InlineData("descent-0-0123456789abcdef")]
-    [InlineData("descent-7-0123456789abcde")]
-    [InlineData("../descent-7-0123456789abcdef")]
-    [InlineData("Descent-7-0123456789abcdef")]
+    [InlineData("tf2_descent_town")]
+    [InlineData("tf2_descent-7-0123456789ABCDEF")]
+    [InlineData("tf2_descent-0-0123456789abcdef")]
+    [InlineData("tf2_descent-7-0123456789abcde")]
+    [InlineData("../tf2_descent-7-0123456789abcdef")]
+    [InlineData("Tf2_descent-7-0123456789abcdef")]
     public void Anything_else_is_not_a_level_map_name(string name) =>
         Assert.False(LevelStorage.TryParseMapName(name, out _, out _, out _));
 
@@ -28,12 +28,12 @@ public sealed class LevelStorageFacts
     {
         var maps = Path.Combine(Path.GetTempPath(), "lane-m-" + Guid.NewGuid().ToString("N"));
         var storage = new LevelStorage(new MapPoolOptions { MapsPath = maps });
-        var files = await new FakeMapCompiler().LinkAsync(new LinkRequest("descent-1-0123456789abcdef", 1, 0, 1, "crypt", "", null,
+        var files = await new FakeMapCompiler().LinkAsync(new LinkRequest("tf2_descent-1-0123456789abcdef", 1, 0, 1, "crypt", "", null,
             Path.Combine(maps, "staging", "x")));
         var bsp = await File.ReadAllBytesAsync(files.Bsp);
         var bytes = await storage.StoreAsync(files);
         Assert.False(File.Exists(files.Bsp));
-        await using var bz2 = File.OpenRead(storage.LevelFile("descent-1-0123456789abcdef", ".bsp.bz2"));
+        await using var bz2 = File.OpenRead(storage.LevelFile("tf2_descent-1-0123456789abcdef", ".bsp.bz2"));
         Assert.Equal(bsp, LevelStorage.Decompress(bz2));
         Assert.True(bytes > bsp.Length);
     }
@@ -43,10 +43,10 @@ public sealed class LevelStorageFacts
     {
         var maps = Path.Combine(Path.GetTempPath(), "lane-m-" + Guid.NewGuid().ToString("N"));
         var storage = new LevelStorage(new MapPoolOptions { MapsPath = maps });
-        var files = await new FakeMapCompiler().LinkAsync(new LinkRequest("descent-1-0123456789abcdef", 1, 0, 1, "crypt", "", null,
+        var files = await new FakeMapCompiler().LinkAsync(new LinkRequest("tf2_descent-1-0123456789abcdef", 1, 0, 1, "crypt", "", null,
             Path.Combine(maps, "staging", "x")));
         await storage.StoreAsync(files);
-        Assert.Equal(5, storage.DeleteLevel("descent-1-0123456789abcdef"));
+        Assert.Equal(5, storage.DeleteLevel("tf2_descent-1-0123456789abcdef"));
         Assert.Empty(Directory.GetFiles(storage.LevelsDirectory));
     }
 }

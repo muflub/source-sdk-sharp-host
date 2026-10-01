@@ -45,6 +45,32 @@ public class LifecycleFacts
     }
 
     [Fact]
+    public async Task The_booting_hook_runs_once_the_pod_exists()
+    {
+        await using var h = new ManagerHarness();
+        var r = await h.RequestLevel();
+        Assert.DoesNotContain(h.Hooks.Booted, b => b.Id == r.Id);
+        await h.Tick();
+        var booted = Assert.Single(h.Hooks.Booted, b => b.Id == r.Id);
+        Assert.Equal(InstanceState.Booting, booted.State);
+        Assert.NotNull(booted.PodUid);
+    }
+
+    [Fact]
+    public async Task The_hosts_game_port_is_the_rows_expected_port_and_the_pods_port()
+    {
+        await using var h = new ManagerHarness();
+        h.Pods.GamePorts = (kind, configured) => kind == InstanceKind.Level ? configured + 7 : configured;
+        var r = await h.RequestLevel();
+        await h.Tick();
+        var row = await h.Row(r.Id);
+        Assert.Equal(27022, row.ExpectedPort);
+        var args = h.Pods.Created.Single(s => s.Name == row.PodName).Containers[0].Args.ToList();
+        Assert.Equal("27022", args[args.IndexOf("-port") + 1]);
+        Assert.Equal(MapReadyOutcome.PortMismatch, (await h.M.OnMapReady(r.Id, 27015)).Outcome);
+    }
+
+    [Fact]
     public async Task Pod_ip_from_the_watch_is_recorded()
     {
         await using var h = new ManagerHarness();
@@ -228,7 +254,7 @@ public class LifecycleFacts
     public async Task Mod_image_with_the_mods_label_is_accepted()
     {
         await using var h = new ManagerHarness(o => o.Instances.VerifyModLabel = true);
-        h.Inspector = new FixedLabel("descent");
+        h.Inspector = new FixedLabel("tf2_descent");
         h.NewManager();
         var r = await h.RequestLevel();
         await h.Tick();

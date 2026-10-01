@@ -3,7 +3,7 @@
     <ProjectReference Include="../Host.Admin/Host.Admin.csproj" />
     <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
     <!-- The loopback fact runs the real service (ServiceApp.Build) with the admin UI mapped. -->
-    <ProjectReference Include="../Descent.Service/Descent.Service.csproj" />
+    <ProjectReference Include="../TF2.Descent.Service/TF2.Descent.Service.csproj" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

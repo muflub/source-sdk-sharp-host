@@ -7,11 +7,11 @@ namespace SourceSharp.Host.Sdk;
 /// <summary>How this process found its host (plan §6.6, D-H13).</summary>
 public enum HostMode
 {
-    /// <summary>A game pod: <c>DESCENT_SERVICE</c>, <c>DESCENT_INSTANCE_ID</c>, <c>DESCENT_INSTANCE_TOKEN</c>, <c>DESCENT_SIDECAR_INFO</c>.</summary>
+    /// <summary>A game pod: <c>SOURCESHARP_HOST_SERVICE</c>, <c>SOURCESHARP_HOST_INSTANCE_ID</c>, <c>SOURCESHARP_HOST_INSTANCE_TOKEN</c>, <c>SOURCESHARP_HOST_SIDECAR_INFO</c>.</summary>
     Pod,
-    /// <summary><c>-hostlocal &lt;file&gt;</c> or <c>DESCENT_LOCAL=&lt;file&gt;</c>: a local service wrote <see cref="HostLocalFile"/>.</summary>
+    /// <summary><c>-hostlocal &lt;file&gt;</c> or <c>SOURCESHARP_HOST_LOCAL=&lt;file&gt;</c>: a local service wrote <see cref="HostLocalFile"/>.</summary>
     LocalFile,
-    /// <summary><c>-hostlocal inproc[:dir]</c> or <c>DESCENT_LOCAL=inproc[:dir]</c>: the dev-only SourceSharp.Host.Local runs the service in this process.</summary>
+    /// <summary><c>-hostlocal inproc[:dir]</c> or <c>SOURCESHARP_HOST_LOCAL=inproc[:dir]</c>: the dev-only SourceSharp.Host.Local runs the service in this process.</summary>
     LocalInProc,
 }
 
@@ -26,12 +26,19 @@ public sealed record HostEndpoint(HostMode Mode, Uri Service, string InstanceId,
 /// <c>service</c> is the game API's base address (h2c), <c>instanceId</c> an instance row the
 /// service created with <c>token</c> as its token. An optional <c>"sidecar"</c> names a PeerInfo
 /// endpoint; without it IPeers asks the service only. Unknown fields are ignored.
+/// A service that creates the instance's game for the developer also writes what a pod would be
+/// given: <c>"map"</c> (its +map), <c>"port"</c> (the -port it must bind; MapReady is compared
+/// with it) and, for a level, <c>"levelFiles"</c>: absolute paths to the level's .bsp, .nav3d
+/// and .map2d, which the game links into <c>&lt;mod&gt;/pool/maps/</c> under their own names.
 /// </summary>
 public sealed record HostLocalFile(
     [property: JsonPropertyName("service")] string Service,
     [property: JsonPropertyName("instanceId")] string InstanceId,
     [property: JsonPropertyName("token")] string Token,
-    [property: JsonPropertyName("sidecar")] string? Sidecar = null)
+    [property: JsonPropertyName("sidecar")] string? Sidecar = null,
+    [property: JsonPropertyName("map")] string? Map = null,
+    [property: JsonPropertyName("levelFiles")] IReadOnlyList<string>? LevelFiles = null,
+    [property: JsonPropertyName("port")] int? Port = null)
 {
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });
 
@@ -68,7 +75,7 @@ public static class LocalHostContract
     public const string AssemblyName = "SourceSharp.Host.Local";
     public const string TypeName = "SourceSharp.Host.Local.LocalHost";
     public const string MethodName = "StartAsync";
-    public const string DefaultDataDir = "./descent-local/";
+    public const string DefaultDataDir = "./sourcesharp-local/";
     public const string MissingMessage = "the dev build does not include SourceSharp.Host.Local";
 }
 
@@ -109,18 +116,18 @@ public sealed class ReflectionLocalHostStarter : ILocalHostStarter
 /// <summary>Chooses the mode and reads its inputs (plan §6.6 pod mode, D-H13 local modes).</summary>
 public static class HostSdkConfig
 {
-    public const string ServiceVar = "DESCENT_SERVICE";
-    public const string InstanceIdVar = "DESCENT_INSTANCE_ID";
-    public const string TokenVar = "DESCENT_INSTANCE_TOKEN";
-    public const string SidecarVar = "DESCENT_SIDECAR_INFO";
-    public const string LocalVar = "DESCENT_LOCAL";
+    public const string ServiceVar = "SOURCESHARP_HOST_SERVICE";
+    public const string InstanceIdVar = "SOURCESHARP_HOST_INSTANCE_ID";
+    public const string TokenVar = "SOURCESHARP_HOST_INSTANCE_TOKEN";
+    public const string SidecarVar = "SOURCESHARP_HOST_SIDECAR_INFO";
+    public const string LocalVar = "SOURCESHARP_HOST_LOCAL";
     public const string LocalArg = "-hostlocal";
     public const string DefaultSidecar = "127.0.0.1:5011";
     public const string InProc = "inproc";
 
     /// <summary>
     /// The local selector, if any: <c>-hostlocal &lt;value&gt;</c> in the process arguments wins over
-    /// <c>DESCENT_LOCAL</c>; neither means pod mode.
+    /// <c>SOURCESHARP_HOST_LOCAL</c>; neither means pod mode.
     /// </summary>
     public static string? LocalSelector(IReadOnlyList<string> args, Func<string, string?> env)
     {
@@ -182,7 +189,7 @@ public static class HostSdkConfig
         }
     }
 
-    static HostEndpoint FromLocal(HostMode mode, HostLocalFile f) =>
+    internal static HostEndpoint FromLocal(HostMode mode, HostLocalFile f) =>
         new(mode, Http(f.Service), f.InstanceId, f.Token, string.IsNullOrWhiteSpace(f.Sidecar) ? null : Http(f.Sidecar));
 
     /// <summary><c>host:port</c> or a URI, as an h2c base address.</summary>

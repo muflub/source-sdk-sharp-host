@@ -18,8 +18,8 @@ public class PodSpecFacts
     {
         var o = new InstanceOptions
         {
-            EngineImage = "reg.local/descent-engine:1",
-            ModImage = new ImageRef { Registry = "reg.local", Name = "descent-mod", Tag = "42" },
+            EngineImage = "reg.local/sourcesharp-engine:1",
+            ModImage = new ImageRef { Registry = "reg.local", Name = "tf2-descent-mod", Tag = "42" },
             NodeSelector = new() { ["pool"] = "game" },
             Tolerations = [new PodToleration { Key = "game", Operator = "Equal", Value = "yes", Effect = "NoSchedule" }],
         };
@@ -30,7 +30,7 @@ public class PodSpecFacts
     static readonly ModOptions Mod = new();
 
     static V1Pod Pod(InstanceKind kind, Action<InstanceOptions>? change = null) =>
-        KubernetesMapping.ToPod(GamePodBuilder.Build(Options(change), Mod, Row(kind), Token), "descent");
+        KubernetesMapping.ToPod(GamePodBuilder.Build(Options(change), Mod, Row(kind), Token), "tf2-descent");
 
     static V1Container Game(V1Pod p) => p.Spec.Containers.Single(c => c.Name == "game");
     static string? Env(V1Container c, string name) => c.Env.Single(e => e.Name == name).Value;
@@ -38,18 +38,18 @@ public class PodSpecFacts
     [Fact]
     public void Name_is_descent_kind_and_lowercased_id()
     {
-        Assert.Equal("descent-level-01j9zabcdefghjkmnpqrstvwxy", Pod(InstanceKind.Level).Metadata.Name);
-        Assert.Equal("descent-hub-01j9zabcdefghjkmnpqrstvwxy", Pod(InstanceKind.Hub).Metadata.Name);
+        Assert.Equal("sourcesharp-level-01j9zabcdefghjkmnpqrstvwxy", Pod(InstanceKind.Level).Metadata.Name);
+        Assert.Equal("sourcesharp-hub-01j9zabcdefghjkmnpqrstvwxy", Pod(InstanceKind.Hub).Metadata.Name);
     }
 
     [Fact]
     public void Labels_carry_app_instance_and_kind()
     {
         var labels = Pod(InstanceKind.Level).Metadata.Labels;
-        Assert.Equal("descent-game", labels["app"]);
-        Assert.Equal("01J9ZABCDEFGHJKMNPQRSTVWXY", labels["descent/instance"]);
-        Assert.Equal("level", labels["descent/kind"]);
-        Assert.Equal("hub", Pod(InstanceKind.Hub).Metadata.Labels["descent/kind"]);
+        Assert.Equal("sourcesharp-game", labels["app"]);
+        Assert.Equal("01J9ZABCDEFGHJKMNPQRSTVWXY", labels["sourcesharp/instance"]);
+        Assert.Equal("level", labels["sourcesharp/kind"]);
+        Assert.Equal("hub", Pod(InstanceKind.Hub).Metadata.Labels["sourcesharp/kind"]);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class PodSpecFacts
     public void Mod_init_container_copies_the_mod_image_into_the_game_volume()
     {
         var mod = Pod(InstanceKind.Hub).Spec.InitContainers.Single(c => c.Name == "mod");
-        Assert.Equal("reg.local/descent-mod:42", mod.Image);
+        Assert.Equal("reg.local/tf2-descent-mod:42", mod.Image);
         Assert.Equal(["sh", "-c", "cp -a /game/. /out/"], mod.Command);
         Assert.Equal(("game", "/out"), (mod.VolumeMounts.Single().Name, mod.VolumeMounts.Single().MountPath));
     }
@@ -76,9 +76,9 @@ public class PodSpecFacts
         var init = Pod(InstanceKind.Level).Spec.InitContainers;
         Assert.Equal(["mod", "fetch-level"], init.Select(c => c.Name));
         var fetch = init[1];
-        Assert.Equal("reg.local/descent-engine:1", fetch.Image);
-        Assert.Equal(["/opt/descent/fetch-level.sh", "descent-7-abc123"], fetch.Command);
-        Assert.Equal("http://descent-service-internal:5000", Env(fetch, "DESCENT_INTERNAL_MAPS"));
+        Assert.Equal("reg.local/sourcesharp-engine:1", fetch.Image);
+        Assert.Equal(["/opt/sourcesharp/fetch-level.sh", "tf2_descent-7-abc123"], fetch.Command);
+        Assert.Equal("http://tf2-descent-service-internal:5000", Env(fetch, "SOURCESHARP_HOST_INTERNAL_MAPS"));
         Assert.Equal(("maps-overlay", "/game/maps-overlay"), (fetch.VolumeMounts.Single().Name, fetch.VolumeMounts.Single().MountPath));
     }
 
@@ -99,8 +99,8 @@ public class PodSpecFacts
     public void Game_container_runs_the_engine_image_through_the_entrypoint()
     {
         var g = Game(Pod(InstanceKind.Level));
-        Assert.Equal("reg.local/descent-engine:1", g.Image);
-        Assert.Equal(["/opt/descent/game-entrypoint.sh"], g.Command);
+        Assert.Equal("reg.local/sourcesharp-engine:1", g.Image);
+        Assert.Equal(["/opt/sourcesharp/game-entrypoint.sh"], g.Command);
     }
 
     [Fact]
@@ -110,17 +110,36 @@ public class PodSpecFacts
         string[] expected =
         [
             "-nohltv", "+tv_enable", "0", "-devapi", "-devapisocket", "-condebug", "-nomessagebox", "-nocrashdialog", "-assertlog",
-            "-game", "/game/mods/descent", "-console", "-port", "27015", "-ip", "0.0.0.0",
-            "+maxplayers", "4", "+map", "descent-7-abc123", "+descent_instance", "01J9ZABCDEFGHJKMNPQRSTVWXY",
+            "-game", "/game/mods/tf2_descent", "-console", "-port", "27015", "-ip", "0.0.0.0",
+            "+maxplayers", "4", "+map", "tf2_descent-7-abc123",
         ];
         Assert.Equal(expected, args);
+    }
+
+    [Fact]
+    public void A_fastdl_url_enables_downloads_before_the_map_loads()
+    {
+        var args = Game(Pod(InstanceKind.Level, o => o.FastDlUrl = "http://maps.example:5004/")).Args.ToList();
+        var at = args.IndexOf("+sv_downloadurl");
+        Assert.True(at >= 0, "no +sv_downloadurl");
+        Assert.Equal("http://maps.example:5004/", args[at + 1]);
+        Assert.Equal("1", args[args.IndexOf("+sv_allowdownload") + 1]);
+        Assert.True(at < args.IndexOf("+map"), "the download url must be set before +map loads the level");
+    }
+
+    [Fact]
+    public void No_fastdl_url_means_no_download_args()
+    {
+        var args = Game(Pod(InstanceKind.Level, o => o.FastDlUrl = "")).Args;
+        Assert.DoesNotContain("+sv_downloadurl", args);
+        Assert.DoesNotContain("+sv_allowdownload", args);
     }
 
     [Fact]
     public void Hub_runs_the_town_map_with_hub_maxplayers()
     {
         var args = Game(Pod(InstanceKind.Hub)).Args.ToList();
-        Assert.Equal("descent_town", args[args.IndexOf("+map") + 1]);
+        Assert.Equal("tf2_descent_town", args[args.IndexOf("+map") + 1]);
         Assert.Equal("32", args[args.IndexOf("+maxplayers") + 1]);
     }
 
@@ -128,9 +147,9 @@ public class PodSpecFacts
     public void Game_env_names_service_instance_sidecar_and_dirs()
     {
         var g = Game(Pod(InstanceKind.Level));
-        Assert.Equal("descent-service:5001", Env(g, "DESCENT_SERVICE"));
-        Assert.Equal("01J9ZABCDEFGHJKMNPQRSTVWXY", Env(g, "DESCENT_INSTANCE_ID"));
-        Assert.Equal("127.0.0.1:5011", Env(g, "DESCENT_SIDECAR_INFO"));
+        Assert.Equal("tf2-descent-service:5001", Env(g, "SOURCESHARP_HOST_SERVICE"));
+        Assert.Equal("01J9ZABCDEFGHJKMNPQRSTVWXY", Env(g, "SOURCESHARP_HOST_INSTANCE_ID"));
+        Assert.Equal("127.0.0.1:5011", Env(g, "SOURCESHARP_HOST_SIDECAR_INFO"));
         Assert.Equal("/tmp/game", Env(g, "TMPDIR"));
         Assert.Equal("/tmp/devapi", Env(g, "SOURCESHARP_DEVAPI_DIR"));
     }
@@ -139,7 +158,7 @@ public class PodSpecFacts
     public void Game_token_comes_from_the_pods_secret()
     {
         var p = Pod(InstanceKind.Level);
-        var tok = Game(p).Env.Single(e => e.Name == "DESCENT_INSTANCE_TOKEN");
+        var tok = Game(p).Env.Single(e => e.Name == "SOURCESHARP_HOST_INSTANCE_TOKEN");
         Assert.Null(tok.Value);
         Assert.Equal(p.Metadata.Name + "-token", tok.ValueFrom.SecretKeyRef.Name);
         Assert.Equal("token", tok.ValueFrom.SecretKeyRef.Key);
@@ -150,9 +169,9 @@ public class PodSpecFacts
     {
         var spec = GamePodBuilder.Build(Options(), Mod, Row(InstanceKind.Level), Token);
         Assert.Equal(Token, spec.Secret!.Data["token"]); // positive arm: the token went somewhere
-        var json = JsonSerializer.Serialize(KubernetesMapping.ToPod(spec, "descent"));
+        var json = JsonSerializer.Serialize(KubernetesMapping.ToPod(spec, "tf2-descent"));
         Assert.DoesNotContain(Token, json);
-        Assert.Contains("DESCENT_INSTANCE_TOKEN", json);
+        Assert.Contains("SOURCESHARP_HOST_INSTANCE_TOKEN", json);
     }
 
     [Fact]
@@ -160,7 +179,7 @@ public class PodSpecFacts
     {
         var mounts = Game(Pod(InstanceKind.Level)).VolumeMounts.Select(m => (m.Name, m.MountPath, m.ReadOnlyProperty ?? false));
         Assert.Equal(
-            [("game", "/game", false), ("content", "/game/content", true), ("maps-overlay", "/game/mods/descent/maps/pool", false), ("tmp", "/tmp", false)],
+            [("game", "/game", false), ("content", "/game/content", true), ("maps-overlay", "/game/mods/tf2_descent/pool/maps", false), ("tmp", "/tmp", false)],
             mounts);
     }
 
@@ -251,7 +270,7 @@ public class PodSpecFacts
 
     [Fact]
     public void Game_env_names_the_mod_the_entrypoint_hands_to_bootstrap() =>
-        Assert.Equal(new ModOptions().Name, Env(Game(Pod(InstanceKind.Hub)), "DESCENT_MOD"));
+        Assert.Equal(new ModOptions().Name, Env(Game(Pod(InstanceKind.Hub)), "SOURCESHARP_MOD"));
 
     [Fact]
     public void Relay_env_matches_the_declared_ports_and_the_engine_port()
@@ -274,7 +293,7 @@ public class PodSpecFacts
     public void Secret_is_owned_by_the_pod_uid_and_holds_the_token()
     {
         var spec = GamePodBuilder.Build(Options(), Mod, Row(InstanceKind.Level), Token);
-        var secret = KubernetesMapping.ToSecret(spec.Secret!, new PodRef(spec.Name, "uid-1"), "descent");
+        var secret = KubernetesMapping.ToSecret(spec.Secret!, new PodRef(spec.Name, "uid-1"), "tf2-descent");
         Assert.Equal(spec.Name + "-token", secret.Metadata.Name);
         var owner = secret.Metadata.OwnerReferences.Single();
         Assert.Equal(("Pod", spec.Name, "uid-1"), (owner.Kind, owner.Name, owner.Uid));

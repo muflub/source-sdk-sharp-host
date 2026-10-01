@@ -10,10 +10,10 @@
 set -eu
 root=${1:?usage: mod-image-dev.sh <source-sdk-sharp root> <image ref>}
 ref=${2:?usage: mod-image-dev.sh <source-sdk-sharp root> <image ref>}
-mod=${DESCENT_MOD:-descent}
+mod=${MOD_NAME:-tf2_descent}
 tool=${IMAGE_TOOL:-podman}
 game="$root/bin/release"
-for p in mods.yaml bin/linux64 bin/managed bin/dotnet "mods/$mod"; do
+for p in mods.yaml bin/linux64 bin/managed bin/dotnet "mods/$mod" "mods/$mod/mod.dedicated.yaml"; do
   [ -e "$game/$p" ] || { echo "mod-image-dev: $game/$p missing (build the sharp repo's release first)" >&2; exit 1; }
 done
 ctx=$(mktemp -d); trap 'rm -rf "$ctx"' EXIT

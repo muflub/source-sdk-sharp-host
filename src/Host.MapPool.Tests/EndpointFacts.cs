@@ -19,7 +19,7 @@ namespace SourceSharp.Host.MapPool.Tests;
 /// </summary>
 public sealed class EndpointFacts : IAsyncLifetime
 {
-    const string Name = "descent-3-0123456789abcdef";
+    const string Name = "tf2_descent-3-0123456789abcdef";
     WebApplication _app = null!;
     HttpClient _http = null!;
     readonly TestData _db = new();
@@ -37,7 +37,7 @@ public sealed class EndpointFacts : IAsyncLifetime
         b.Services.AddSingleton<IRulesProvider>(new SwitchableRules { Current = null });
         b.Services.AddSingleton<IPoolDemand, NoPoolDemand>();
         b.Services.AddSingleton<IMapCompiler, FakeMapCompiler>();
-        b.Services.AddSingleton<IPackValidator>(new FakePackValidator("descent"));
+        b.Services.AddSingleton<IPackValidator>(new FakePackValidator("tf2_descent"));
         b.Services.AddHostMapPool();
         _app = b.Build();
         _app.MapFastDl();
@@ -124,7 +124,7 @@ public sealed class EndpointFacts : IAsyncLifetime
 
     [Fact]
     public async Task Fastdl_404s_a_well_formed_name_with_no_level() =>
-        await AssertServedThen404("/maps/descent-3-fedcba9876543210.bsp.bz2");
+        await AssertServedThen404("/maps/tf2_descent-3-fedcba9876543210.bsp.bz2");
 
     [Theory]
     [InlineData(".bsp")]
@@ -157,19 +157,19 @@ public sealed class EndpointFacts : IAsyncLifetime
     [Fact]
     public async Task A_bakes_post_of_a_valid_pack_becomes_version_1_with_source_bake()
     {
-        var r = await _http.PostAsync("/internal/packs/descent/crypt", Form(FakePack.Bytes("crypt", ["start"])));
+        var r = await _http.PostAsync("/internal/packs/tf2_descent/crypt", Form(FakePack.Bytes("crypt", ["start"])));
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
-        var pack = (await _db.Read(tx => tx.Library.Packs("descent", "crypt"))).Single();
+        var pack = (await _db.Read(tx => tx.Library.Packs("tf2_descent", "crypt"))).Single();
         Assert.Equal((1, PackState.Ready, "bake"), (pack.Version, pack.State, pack.Source));
     }
 
     [Fact]
     public async Task A_bakes_post_of_a_corrupt_pack_is_422_and_leaves_no_file()
     {
-        Assert.Equal(HttpStatusCode.OK, (await _http.PostAsync("/internal/packs/descent/crypt", Form(FakePack.Bytes("crypt", ["start"])))).StatusCode);
-        var r = await _http.PostAsync("/internal/packs/descent/crypt", Form("not a pack"u8.ToArray()));
+        Assert.Equal(HttpStatusCode.OK, (await _http.PostAsync("/internal/packs/tf2_descent/crypt", Form(FakePack.Bytes("crypt", ["start"])))).StatusCode);
+        var r = await _http.PostAsync("/internal/packs/tf2_descent/crypt", Form("not a pack"u8.ToArray()));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode);
-        Assert.Single(Directory.GetFiles(Path.Combine(_options.MapPool.MapsPath, "packs", "descent", "crypt"), "*.roompack"));
+        Assert.Single(Directory.GetFiles(Path.Combine(_options.MapPool.MapsPath, "packs", "tf2_descent", "crypt"), "*.roompack"));
     }
 
     [Fact]

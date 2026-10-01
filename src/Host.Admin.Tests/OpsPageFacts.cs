@@ -98,8 +98,8 @@ public sealed class OpsPageFacts : PageFacts
 
     async Task<InstanceRecord> RunningInstance()
     {
-        var pod = W.Pods.Seed("descent-lvl-1", new Dictionary<string, string> { [GamePodLabels.App] = GamePodLabels.AppValue });
-        W.Pods.AppendLog(pod.Name, "Map descent-3-abc loaded\n");
+        var pod = W.Pods.Seed("sourcesharp-lvl-1", new Dictionary<string, string> { [GamePodLabels.App] = GamePodLabels.AppValue });
+        W.Pods.AppendLog(pod.Name, "Map tf2_descent-3-abc loaded\n");
         return await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, pod.Name, pod.Uid,
             "10.42.0.9", 27015, "hash", null, null, "fake", 1, tx.Now, null, tx.Now, null, null, null, null, tx.Now, 2, 27015)));
     }
@@ -129,7 +129,7 @@ public sealed class OpsPageFacts : PageFacts
         await RunningInstance();
         var cut = Page<InstancesPage>(".open");
         cut.Find(".open").Click();
-        cut.WaitForAssertion(() => Assert.Contains("Map descent-3-abc loaded", cut.Find("#log").TextContent));
+        cut.WaitForAssertion(() => Assert.Contains("Map tf2_descent-3-abc loaded", cut.Find("#log").TextContent));
         Assert.Equal("admin/instances/lvl-1/devapi/", cut.Find("#devapi").GetAttribute("href"));
     }
 
@@ -211,7 +211,7 @@ public sealed class OpsPageFacts : PageFacts
     {
         var job = await W.D.Write(async tx =>
         {
-            var j = await tx.MapJobs.Enqueue(MapJobKind.Link, "link:descent:2:1:0", 3);
+            var j = await tx.MapJobs.Enqueue(MapJobKind.Link, "link:tf2_descent:2:1:0", 3);
             await tx.MapJobs.TakeNext();
             return await tx.MapJobs.Fail(j.Id, "boom", requeue: false);
         });
@@ -224,7 +224,7 @@ public sealed class OpsPageFacts : PageFacts
     async Task<PackRecord> Upload()
     {
         using var s = new MemoryStream(FakePack.Bytes("crypt", ["start", "hall", "stairs"]));
-        return (await W.Catalog.UploadAsync("descent", "crypt", s, "{}", null, "upload", "admin@localhost")).Pack;
+        return (await W.Catalog.UploadAsync("tf2_descent", "crypt", s, "{}", null, "upload", "admin@localhost")).Pack;
     }
 
     [Fact]
@@ -250,7 +250,7 @@ public sealed class OpsPageFacts : PageFacts
         Confirm(cut, "\"Depth\": 3");
         WaitResult(cut, "activated");
         var args = Rec.Single(nameof(IAdminActions.ActivatePack));
-        Assert.Equal("descent", args[0]);
+        Assert.Equal("tf2_descent", args[0]);
         Assert.Equal([2, 3, 4], (IEnumerable<int>)args[1]!);
         Assert.Equal((p.Id, true, OldLevelsPolicy.Retire), ((long)args[2]!, (bool)args[3]!, (OldLevelsPolicy)args[4]!));
         cut.WaitForAssertion(() => Assert.Contains("2,3,4", cut.Find($"#pack-{p.Id}").TextContent));
@@ -266,7 +266,7 @@ public sealed class OpsPageFacts : PageFacts
         Assert.Contains("rejected: lint", cut.Find("#upload-result").TextContent);
     }
 
-    Task<RulesModuleRecord> Module(string sha, string? instance = null) => W.D.Write(tx => tx.Modules.Add(new RulesModuleRecord(sha, "Descent.Rules", "1.0", "1", "[]",
+    Task<RulesModuleRecord> Module(string sha, string? instance = null) => W.D.Write(tx => tx.Modules.Add(new RulesModuleRecord(sha, "TF2.Descent.Rules", "1.0", "1", "[]",
         tx.Now, instance, ModuleState.Pending, 10)));
 
     [Fact]

@@ -8,7 +8,7 @@ namespace SourceSharp.Host.MapPool.Tests;
 /// <summary>§9.4 assignment: activate, pin, roll back, retire, the old-levels policy, GC.</summary>
 public sealed class PackCatalogFacts : IAsyncLifetime
 {
-    internal const string Mod = "descent", Lib = "crypt";
+    internal const string Mod = "tf2_descent", Lib = "crypt";
     readonly TestData _db = new();
     internal ServiceOptions Options = null!;
     internal PackCatalog Catalog = null!;

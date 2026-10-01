@@ -68,10 +68,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=merge --chown=srcds /opt/srcds /opt/srcds
 # The engine loads steamclient.so from the run user's ~/.steam/sdk64.
 COPY --from=steam --chown=srcds /opt/steamclient/steamclient.so /home/srcds/.steam/sdk64/steamclient.so
-COPY --from=launcher /out/SourceSharp.Host.Launcher /opt/descent/launcher
-COPY deploy/game-entrypoint.sh deploy/fetch-level.sh /opt/descent/
-RUN chmod 0755 /opt/descent/*.sh /opt/descent/launcher
+COPY --from=launcher /out/SourceSharp.Host.Launcher /opt/sourcesharp/launcher
+COPY deploy/game-entrypoint.sh deploy/fetch-level.sh /opt/sourcesharp/
+RUN chmod 0755 /opt/sourcesharp/*.sh /opt/sourcesharp/launcher
 USER srcds
 # PeerRelay (gateway), health; PeerInfo is loopback-only (5011) and the game port is inside the pod.
 EXPOSE 5010 5012
-ENTRYPOINT ["/opt/descent/game-entrypoint.sh"]
+ENTRYPOINT ["/opt/sourcesharp/game-entrypoint.sh"]

@@ -54,6 +54,13 @@ public interface IInstanceLifecycle
     /// <summary>live → draining (admin Drain, hub replacement): refuses new routes, reaped when empty.</summary>
     Task<InstanceRecord> Drain(string instanceId, string reason, string actor, CancellationToken ct = default);
 
+    /// <summary>
+    /// Local same-process travel (D-H13): the instance's game is becoming another instance. It goes
+    /// draining with no Drain command (the game keeps running), heartbeats and timeouts stop
+    /// counting, and it is reaped, not crashed, when its stream closes.
+    /// </summary>
+    Task Leave(string instanceId, string reason, CancellationToken ct = default);
+
     Task Kick(string instanceId, string steamId, string reason, string actor, CancellationToken ct = default);
 
     /// <summary>The admin console (Q22): sent as an Exec command, audited.</summary>
@@ -70,7 +77,8 @@ public abstract record InstanceCommand
     public sealed record Shutdown(string Reason) : InstanceCommand;
     public sealed record Kick(string SteamId, string Reason) : InstanceCommand;
     public sealed record Retry(string SteamId) : InstanceCommand;
-    public sealed record PrepareHop(string SteamId, string TargetInstanceId) : InstanceCommand;
+    /// <summary><paramref name="LocalConnection"/>: only for a same-process hop in local mode (the target's connection record).</summary>
+    public sealed record PrepareHop(string SteamId, string TargetInstanceId, string Map = "", string LocalConnection = "") : InstanceCommand;
     public sealed record Say(string Text) : InstanceCommand;
     public sealed record Exec(string Command) : InstanceCommand;
     /// <summary>The service ended a lease (expiry, admin, crash): the SDK raises LeaseLost.</summary>
@@ -90,6 +98,9 @@ public interface IInstanceCommands
 /// </summary>
 public interface IInstanceHooks
 {
+    /// <summary>The instance's pod exists and its game is starting (Booting).</summary>
+    Task OnBooting(InstanceRecord instance, CancellationToken ct);
+
     /// <summary>The instance went live (MapReady and pod Ready): routes may point at it.</summary>
     Task OnLive(InstanceRecord instance, CancellationToken ct);
 

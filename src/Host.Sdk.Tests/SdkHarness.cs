@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
-using Descent.Service;
-using Descent.Service.Api;
+using TF2.Descent.Service;
+using TF2.Descent.Service.Api;
 using Grpc.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
@@ -14,7 +14,7 @@ using P = SourceSharp.Host.Proto;
 namespace SourceSharp.Host.Sdk.Tests;
 
 /// <summary>
-/// The real service in-process on free loopback ports (as Descent.Service.Tests' ApiHarness):
+/// The real service in-process on free loopback ports (as TF2.Descent.Service.Tests' ApiHarness):
 /// :memory: data, FakeInstanceHost, FakeGameRules, instance rows with known tokens so every SDK
 /// call passes the real auth interceptor. Recording fakes stand in for the pieces other lanes
 /// wire (module registry, gateway sessions, travel), and a TCP proxy in front of the game API
@@ -54,7 +54,7 @@ public sealed class SdkHarness : IAsyncDisposable
             ["Listen:Admin"] = "127.0.0.1:0", ["Listen:Internal"] = "127.0.0.1:0", ["Listen:GameApi"] = "127.0.0.1:0",
             ["Listen:GatewayApi"] = "127.0.0.1:0", ["Listen:FastDl"] = "127.0.0.1:0",
             ["Data:Path"] = dataPath ?? ":memory:",
-            ["MapPool:MapsPath"] = Path.Combine(Path.GetTempPath(), $"descent-sdk-maps-{Guid.NewGuid():N}"),
+            ["MapPool:MapsPath"] = Path.Combine(Path.GetTempPath(), $"sourcesharp-sdk-maps-{Guid.NewGuid():N}"),
             ["Instances:VerifyModLabel"] = "false",
         };
         foreach (var (k, v) in settings ?? []) all[k] = v;
@@ -68,7 +68,7 @@ public sealed class SdkHarness : IAsyncDisposable
             b.Services.AddSingleton<IPlayerSessions, RecordingSessions>();
             b.Services.AddSingleton<IHopListener, RecordingHops>();
             b.Services.AddSingleton<RecordingTripPlanner>();
-            b.Services.AddSingleton<Descent.Service.Travel.ITripPlanner>(sp => sp.GetRequiredService<RecordingTripPlanner>());
+            b.Services.AddSingleton<TF2.Descent.Service.Travel.ITripPlanner>(sp => sp.GetRequiredService<RecordingTripPlanner>());
         });
         await app.StartAsync();
         // The manager adopts at start, in the background: a row added before it finishes has no pod
@@ -92,7 +92,7 @@ public sealed class SdkHarness : IAsyncDisposable
     {
         var now = DateTimeOffset.UtcNow;
         return Data.WriteAsync((tx, _) => tx.Instances.Add(new InstanceRecord(id, kind, state, depth, null, null,
-            $"descent-{id}", $"uid-{id}", "127.0.0.1", 27015, InstanceManager.TokenHash(Token(id)), null, null, "fake", 4321, now,
+            $"tf2_descent-{id}", $"uid-{id}", "127.0.0.1", 27015, InstanceManager.TokenHash(Token(id)), null, null, "fake", 4321, now,
             now, state == InstanceState.Live ? now : null, null, null, null, null, now, 0, 27015)));
     }
 
@@ -220,14 +220,14 @@ public sealed class RecordingHops(IHostData data) : IHopListener
 /// Travel's planner, recorded: the real TravelService (auth, idempotency) runs; the trip itself is
 /// this fake, so the SDK's facts see exactly what the service was asked for.
 /// </summary>
-public sealed class RecordingTripPlanner : Descent.Service.Travel.ITripPlanner
+public sealed class RecordingTripPlanner : TF2.Descent.Service.Travel.ITripPlanner
 {
     public ConcurrentQueue<(string Method, P.TravelRequest Request)> Calls { get; } = new();
 
     public Task<P.TravelResponse> Go(InstanceRecord caller, string characterId, byte[] token, string? partyId, int depth,
-        Descent.Service.Travel.TravelKind kind, string requestId, CancellationToken ct)
+        TF2.Descent.Service.Travel.TravelKind kind, string requestId, CancellationToken ct)
     {
-        var method = kind == Descent.Service.Travel.TravelKind.Descend ? "RequestDescent" : kind.ToString();
+        var method = kind == TF2.Descent.Service.Travel.TravelKind.Descend ? "RequestDescent" : kind.ToString();
         Calls.Enqueue((method, new P.TravelRequest
         {
             RequestId = requestId, CharacterId = characterId, LeaseToken = Google.Protobuf.ByteString.CopyFrom(token), PartyId = partyId ?? "", Depth = depth,

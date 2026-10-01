@@ -22,7 +22,7 @@ public sealed class NoPoolDemand : IPoolDemand
 
 /// <summary>
 /// Starts a bake (plan §9.2): in production a Kubernetes Job from the service image with the
-/// content volume mounted, running <c>Descent.Service bake</c>; the Job POSTs its pack back.
+/// content volume mounted, running <c>TF2.Descent.Service bake</c>; the Job POSTs its pack back.
 /// Returns when the Job has ended; throws on failure.
 /// </summary>
 public interface IBakeLauncher

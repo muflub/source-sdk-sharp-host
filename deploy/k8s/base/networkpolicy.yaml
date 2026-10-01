@@ -15,20 +15,20 @@ metadata:
   name: game-pods
 spec:
   podSelector:
-    matchLabels: { app: descent-game }
+    matchLabels: { app: sourcesharp-game }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
-        - podSelector: { matchLabels: { app: descent-gateway } }
+        - podSelector: { matchLabels: { app: tf2-descent-gateway } }
       ports:
         - { protocol: TCP, port: 5010 }
     - from:
-        - podSelector: { matchLabels: { app: descent-service } }
+        - podSelector: { matchLabels: { app: tf2-descent-service } }
       ports:
         - { protocol: TCP }          # every TCP port; still no UDP
   egress:
     - to:
-        - podSelector: { matchLabels: { app: descent-service } }
+        - podSelector: { matchLabels: { app: tf2-descent-service } }
       ports:
         - { protocol: TCP, port: 5001 }
         - { protocol: TCP, port: 5000 }
@@ -44,7 +44,7 @@ metadata:
   name: service
 spec:
   podSelector:
-    matchLabels: { app: descent-service }
+    matchLabels: { app: tf2-descent-service }
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -63,11 +63,11 @@ metadata:
   name: gateway
 spec:
   podSelector:
-    matchLabels: { app: descent-gateway }
+    matchLabels: { app: tf2-descent-gateway }
   policyTypes: [Ingress]
   ingress:
     - from:
-        - podSelector: { matchLabels: { app: descent-service } }
+        - podSelector: { matchLabels: { app: tf2-descent-service } }
       ports:
         - { protocol: TCP, port: 5003 }
     - ports:

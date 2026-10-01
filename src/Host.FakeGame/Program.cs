@@ -1,8 +1,8 @@
 namespace SourceSharp.Host.FakeGame;
 
 /// <summary>
-/// The TIER=fake engine image's process: the pod's arguments (-port, +map, +descent_instance, and
-/// -hostlocal like the real game) and environment (DESCENT_*, RELAY_*, FAKEGAME_*). Runs until the
+/// The TIER=fake engine image's process: the pod's arguments (-port, +map, and
+/// -hostlocal like the real game) and environment (SOURCESHARP_HOST_*, RELAY_*, FAKEGAME_*). Runs until the
 /// service's Shutdown (exit 0), a FakeGameControl Crash (its code), or SIGTERM (0).
 /// </summary>
 public static class Program

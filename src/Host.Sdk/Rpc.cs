@@ -11,19 +11,19 @@ namespace SourceSharp.Host.Sdk;
 /// </summary>
 internal sealed class Rpc : IDisposable
 {
-    readonly HostEndpoint _endpoint;
+    readonly Func<HostEndpoint> _endpoint;
     readonly HostSdkOptions _options;
     readonly HostMetrics _metrics;
     readonly CancellationToken _stopping;
     public GrpcChannel Channel { get; }
 
-    public Rpc(HostEndpoint endpoint, HostSdkOptions options, HostMetrics metrics, CancellationToken stopping)
+    public Rpc(Func<HostEndpoint> endpoint, HostSdkOptions options, HostMetrics metrics, CancellationToken stopping)
     {
         _endpoint = endpoint;
         _options = options;
         _metrics = metrics;
         _stopping = stopping;
-        Channel = CreateChannel(endpoint.Service, options);
+        Channel = CreateChannel(endpoint().Service, options);
     }
 
     public static GrpcChannel CreateChannel(Uri address, HostSdkOptions options) =>
@@ -41,7 +41,11 @@ internal sealed class Rpc : IDisposable
             MaxReceiveMessageSize = 64 * 1024 * 1024,
         });
 
-    public Metadata Auth() => new() { { "x-instance-id", _endpoint.InstanceId }, { "x-instance-token", _endpoint.Token } };
+    public Metadata Auth()
+    {
+        var e = _endpoint();
+        return new() { { "x-instance-id", e.InstanceId }, { "x-instance-token", e.Token } };
+    }
 
     public static string NewRequestId() => Guid.NewGuid().ToString("N");
 

@@ -40,7 +40,7 @@ public sealed record FixtureModule(string Assembly, IReadOnlyList<(string Assemb
 /// <summary>The registry, loader and provider over the real stores on :memory:, a temp module root, and a switchable reference set.</summary>
 public sealed class ModuleHarness : IAsyncDisposable
 {
-    public const string ModImage = "registry.local/descent-mod:1";
+    public const string ModImage = "registry.local/tf2-descent-mod:1";
 
     public TestData D { get; } = new();
     public string Root { get; } = Path.Combine(Path.GetTempPath(), $"d2-modules-{Guid.NewGuid():N}");
@@ -90,7 +90,7 @@ public sealed class ModuleHarness : IAsyncDisposable
         D.Read(tx => tx.Audit.List(new AuditQuery(Action: action)));
 
     public Task<InstanceRecord> AddInstance(string id, string? sha, InstanceState state = InstanceState.Live) =>
-        D.Write(tx => tx.Instances.Add(new InstanceRecord(id, InstanceKind.Level, state, 1, null, null, $"descent-{id}", $"uid-{id}",
+        D.Write(tx => tx.Instances.Add(new InstanceRecord(id, InstanceKind.Level, state, 1, null, null, $"tf2_descent-{id}", $"uid-{id}",
             "10.42.0.9", 27015, "hash", ModImage, null, sha, Seed: 1, D.Clock.GetUtcNow(), D.Clock.GetUtcNow(), null, null, null, null, null, null, 0, 27015)));
 
     /// <summary>Every file under the module root, relative, sorted: what an upload left on disk.</summary>

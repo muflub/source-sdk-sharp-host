@@ -38,6 +38,9 @@ public sealed class FakeInstanceHost(TimeProvider clock) : IInstanceHost
     /// <summary>Every call that changes a pod: ("create", name, uid, null) and ("delete", name, uid, grace).</summary>
     public List<(string Op, string Name, string Uid, TimeSpan? Grace)> Calls { get; } = [];
     public List<PodSpec> Created { get; } = [];
+    /// <summary>The port each new instance's game binds; null = the configured one, as a cluster does.</summary>
+    public Func<InstanceKind, int, int>? GamePorts { get; set; }
+    public int GamePort(InstanceKind kind, int configured) => GamePorts?.Invoke(kind, configured) ?? configured;
     /// <summary>Live Secrets by name, with the uid of the pod that owns them.</summary>
     public Dictionary<string, (SecretSpec Secret, string OwnerUid)> Secrets { get; } = [];
     /// <summary>Called after a pod is created: an in-process fake game server hooks in here.</summary>

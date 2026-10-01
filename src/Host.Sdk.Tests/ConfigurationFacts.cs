@@ -13,7 +13,7 @@ public class ConfigurationFacts
 
     static readonly (string, string)[] PodEnv =
     [
-        (HostSdkConfig.ServiceVar, "descent-service:5001"), (HostSdkConfig.InstanceIdVar, "lvl-7"), (HostSdkConfig.TokenVar, "tok"),
+        (HostSdkConfig.ServiceVar, "tf2-descent-service:5001"), (HostSdkConfig.InstanceIdVar, "lvl-7"), (HostSdkConfig.TokenVar, "tok"),
     ];
 
     sealed class RecordingStarter(string json) : ILocalHostStarter
@@ -35,7 +35,7 @@ public class ConfigurationFacts
     public async Task Pod_mode_reads_the_pod_environment_and_defaults_the_sidecar()
     {
         var e = await HostSdkConfig.Resolve(["srcds"], Env(PodEnv), new RecordingStarter(Record));
-        Assert.Equal((HostMode.Pod, "http://descent-service:5001/", "lvl-7", "tok", "http://127.0.0.1:5011/"),
+        Assert.Equal((HostMode.Pod, "http://tf2-descent-service:5001/", "lvl-7", "tok", "http://127.0.0.1:5011/"),
             (e.Mode, e.Service.ToString(), e.InstanceId, e.Token, e.Sidecar!.ToString()));
     }
 

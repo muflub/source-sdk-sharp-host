@@ -1,19 +1,53 @@
 #!/bin/sh
-# What source# does for a dedicated run, and no more (plan §7.1): the library path, the fd limit
-# and env from mods.yaml, then exec Host.Launcher (plan D-H11) with the mod's args plus the pod's.
-# The launcher serves the relay and runs srcds's DedicatedMain on its main thread.
+# What source# does for a dedicated run, and no more (plan §7.1): the library path, then the
+# mod's resolved dedicated settings (fd limit, env, args), then exec Host.Launcher (plan D-H11)
+# with the mod's args plus the pod's. The launcher serves the relay and runs srcds's
+# DedicatedMain on its main thread.
 # The mod files are on the `game` volume at /game (D-H6). REQUIRE_MOD=0 runs the bare engine
 # (a stock game such as hl2mp, H0a) without a mod.
 set -eu
 GAME=${GAME_DIR:-/game}
 ENGINE=${ENGINE_DIR:-/opt/srcds}
-MOD=${DESCENT_MOD:-descent}
-if [ -f "$GAME/mods.yaml" ]; then
-  # engine.fd_limit from the mod's mods.yaml entry, if present (a flat grep: mods.yaml is ours and simple).
-  fd=$(awk -v m="$MOD:" '$1==m{f=1;next} f&&/^[^ ]/{f=0} f&&$1=="fd_limit:"{print $2; exit}' "$GAME/mods.yaml" || true)
-  [ -n "${fd:-}" ] && ulimit -n "$fd" 2>/dev/null || true
+MOD=${SOURCESHARP_MOD:-tf2_descent}
+# The mod's settings as `source# -resolve <id> -dedicated` writes them (docs/mod-image.md):
+# defaults and engine.dedicated already merged, so nothing here re-implements the inheritance.
+# The writer emits only plain scalars, in this shape:
+#   fd_limit: <int>   restart_exit_code: <int>   args: [] | args: then "  - <arg>" lines
+#   env: {} | env: then "  KEY: <value>" lines
+# restart_exit_code is source#'s own (local restarts); pods are restartPolicy Never.
+SETTINGS="$GAME/mods/$MOD/mod.dedicated.yaml"
+if [ -f "$SETTINGS" ]; then
+  pod_args=$#
+  section=
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+      '  - '*)
+        [ "$section" = args ] || { echo "entrypoint: $SETTINGS: list item outside args: '$line'" >&2; exit 65; }
+        set -- "$@" "${line#  - }" ;;
+      '  '*': '*|'  '*:)
+        [ "$section" = env ] || { echo "entrypoint: $SETTINGS: map entry outside env: '$line'" >&2; exit 65; }
+        entry=${line#  }
+        key=${entry%%:*}
+        case "$entry" in *': '*) value=${entry#*: } ;; *) value= ;; esac
+        case "$key" in
+          ''|[0-9]*|*[!A-Za-z0-9_]*) echo "entrypoint: $SETTINGS: '$key' is not an environment name" >&2; exit 65 ;;
+        esac
+        export "$key=$value" ;;
+      'fd_limit: '*) section=; ulimit -n "${line#fd_limit: }" 2>/dev/null || echo "entrypoint: could not raise the fd limit to ${line#fd_limit: }" >&2 ;;
+      'restart_exit_code: '*) section= ;;
+      'args: []') section= ;;
+      'args:') section=args ;;
+      'env: {}') section= ;;
+      'env:') section=env ;;
+      *) echo "entrypoint: $SETTINGS: unexpected line '$line' (is the mod image's source# newer than this entrypoint?)" >&2; exit 65 ;;
+    esac
+  done < "$SETTINGS"
+  # The mod's args were appended after the pod's; rotate the pod's to the end so they win.
+  i=0
+  while [ "$i" -lt "$pod_args" ]; do a=$1; shift; set -- "$@" "$a"; i=$((i + 1)); done
 elif [ "${REQUIRE_MOD:-1}" != 0 ]; then
-  echo "entrypoint: $GAME/mods.yaml missing: did the mod init container run? (REQUIRE_MOD=0 runs without a mod)" >&2
+  echo "entrypoint: $SETTINGS missing: did the mod init container run, and does the mod image carry source#'s resolved settings? (REQUIRE_MOD=0 runs without a mod)" >&2
   exit 64
 fi
 
@@ -27,4 +61,5 @@ export LAUNCHER_EngineDir=${LAUNCHER_EngineDir:-$ENGINE}
 export SOURCESHARP_MOD=${SOURCESHARP_MOD:-$MOD} SOURCESHARP_MODS_YAML=${SOURCESHARP_MODS_YAML:-$GAME/mods.yaml}
 mkdir -p "$TMPDIR" "$SOURCESHARP_DEVAPI_DIR"
 cd "$ENGINE"
-exec /opt/descent/launcher "$@"
+# ENTRYPOINT_LAUNCHER: a fact replaces the launcher to see what it would be given.
+exec "${ENTRYPOINT_LAUNCHER:-/opt/sourcesharp/launcher}" "$@"

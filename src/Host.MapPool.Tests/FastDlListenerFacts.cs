@@ -19,7 +19,7 @@ namespace SourceSharp.Host.MapPool.Tests;
 /// </summary>
 public sealed class FastDlListenerFacts : IAsyncLifetime
 {
-    const string Name = "descent-2-00112233445566ff";
+    const string Name = "tf2_descent-2-00112233445566ff";
     WebApplication _app = null!;
     Uri _base = null!;
 

@@ -90,6 +90,55 @@ public class HealthAndReapFacts
         Assert.Equal(InstanceState.Draining, (await h.Row(row.Id)).State);
     }
 
+    // ------------------------------------------------------------------ Leave (D-H13 same-process travel)
+
+    [Fact]
+    public async Task Leave_drains_without_telling_the_game_to_drain()
+    {
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        await h.M.Leave(row.Id, "same_process_hop");
+        var after = await h.Row(row.Id);
+        Assert.Equal((InstanceState.Draining, "same_process_hop"), (after.State, after.Reason));
+        Assert.DoesNotContain(h.Commands.Sent, c => c.Instance == row.Id && c.Command is InstanceCommand.Drain);
+    }
+
+    [Fact]
+    public async Task A_left_instance_is_reaped_not_crashed_when_its_stream_closes()
+    {
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        await h.M.OnHeartbeat(row.Id, 1);
+        await h.M.Leave(row.Id, "same_process_hop");
+        await h.M.OnStreamClosed(row.Id);
+        var after = await h.Row(row.Id);
+        Assert.Equal(InstanceState.Reaped, after.State);
+        Assert.Equal(["OnLive", "OnReaping", "OnReaped"], h.Hooks.For(row.Id));
+    }
+
+    [Fact]
+    public async Task A_left_instance_outlives_missed_heartbeats_while_its_game_changes_map()
+    {
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        await h.M.OnHeartbeat(row.Id, 1);
+        await h.M.Leave(row.Id, "same_process_hop");
+        await h.Advance(Beats(h, h.Options.Instances.ReapAfterMissed + 2));
+        await h.Tick();
+        Assert.Equal(InstanceState.Draining, (await h.Row(row.Id)).State);
+    }
+
+    [Fact]
+    public async Task A_left_instances_heartbeats_do_not_count_its_players()
+    {
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        await h.M.OnHeartbeat(row.Id, 0);
+        await h.M.Leave(row.Id, "same_process_hop");
+        await h.M.OnHeartbeat(row.Id, 3);
+        Assert.Equal(0, (await h.Row(row.Id)).Players);
+    }
+
     [Fact]
     public async Task Pod_failed_outside_draining_is_a_crash_with_its_exit_code()
     {

@@ -1,4 +1,4 @@
-using Descent.Service;
+using TF2.Descent.Service;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,11 +31,11 @@ public sealed class AdminServiceHost : IAsyncDisposable
                 ["Listen:GatewayApi"] = "127.0.0.1:0",
                 ["Listen:FastDl"] = "127.0.0.1:0",
                 ["AdminUi:Refresh"] = "00:00:00",
-                // Test defaults (as Descent.Service.Tests' TestService): never real paths, never a cluster.
+                // Test defaults (as TF2.Descent.Service.Tests' TestService): never real paths, never a cluster.
                 ["Data:Path"] = ":memory:",
-                ["MapPool:MapsPath"] = Path.Combine(Path.GetTempPath(), $"descent-maps-{Guid.NewGuid():N}"),
-                ["Modules:Path"] = Path.Combine(Path.GetTempPath(), $"descent-modules-{Guid.NewGuid():N}"),
-                ["Data:BackupPath"] = Path.Combine(Path.GetTempPath(), $"descent-backups-{Guid.NewGuid():N}"),
+                ["MapPool:MapsPath"] = Path.Combine(Path.GetTempPath(), $"sourcesharp-maps-{Guid.NewGuid():N}"),
+                ["Modules:Path"] = Path.Combine(Path.GetTempPath(), $"sourcesharp-modules-{Guid.NewGuid():N}"),
+                ["Data:BackupPath"] = Path.Combine(Path.GetTempPath(), $"sourcesharp-backups-{Guid.NewGuid():N}"),
                 ["Instances:VerifyModLabel"] = "false",
             });
             b.Services.AddSingleton<IInstanceHost>(pods ?? (sp => new SourceSharp.Host.Testing.FakeInstanceHost(sp.GetRequiredService<TimeProvider>())));
@@ -66,6 +66,7 @@ public sealed class AdminServiceHost : IAsyncDisposable
         public IAsyncEnumerable<PodEvent> Watch(CancellationToken ct) => inner.Watch(ct);
         public Task<bool> Delete(string name, string uid, TimeSpan grace, CancellationToken ct = default) => inner.Delete(name, uid, grace, ct);
         public Task<string> Logs(string name, int tail, CancellationToken ct = default) => inner.Logs(name, tail, ct);
+        public int GamePort(InstanceKind kind, int configured) => inner.GamePort(kind, configured);
         public async Task<IReadOnlyList<PodStatus>> List(string labelSelector, CancellationToken ct = default)
         {
             await listed.WaitAsync(ct);

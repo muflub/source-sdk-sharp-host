@@ -101,6 +101,7 @@ sealed class LoggingHost(FakeInstanceHost inner, List<string> log) : IInstanceHo
 {
     public Task<PodRef> Create(PodSpec spec, CancellationToken ct = default) { log.Add($"create {spec.Name}"); return inner.Create(spec, ct); }
     public IAsyncEnumerable<PodEvent> Watch(CancellationToken ct) => inner.Watch(ct);
+    public int GamePort(InstanceKind kind, int configured) => inner.GamePort(kind, configured);
     public Task<bool> Delete(string name, string uid, TimeSpan grace, CancellationToken ct = default)
     {
         log.Add($"delete {name} {uid} {grace.TotalSeconds:0}s");
@@ -129,6 +130,9 @@ sealed class RecordingHooks(List<string> log) : IInstanceHooks
     public HashSet<string> Corpses { get; } = [];
     public List<(string Hook, InstanceRecord Row)> Calls { get; } = [];
     Task Record(string hook, InstanceRecord row) { Calls.Add((hook, row)); log.Add($"{hook} {row.Id}"); return Task.CompletedTask; }
+    /// <summary>OnBooting is kept apart from the log: the lifecycle facts' sequences predate it.</summary>
+    public List<InstanceRecord> Booted { get; } = [];
+    public Task OnBooting(InstanceRecord instance, CancellationToken ct) { Booted.Add(instance); return Task.CompletedTask; }
     public Task OnLive(InstanceRecord instance, CancellationToken ct) => Record("OnLive", instance);
     public Task OnReaping(InstanceRecord instance, CancellationToken ct) => Record("OnReaping", instance);
     /// <summary>The next OnReaped throws after recording: the service "dies" between the delete and the sweep.</summary>

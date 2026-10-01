@@ -1,7 +1,7 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Descent.MapForge/Descent.MapForge.csproj" />
-    <Project Path="src/Descent.Service/Descent.Service.csproj" />
+    <Project Path="src/TF2.Descent.MapForge/TF2.Descent.MapForge.csproj" />
+    <Project Path="src/TF2.Descent.Service/TF2.Descent.Service.csproj" />
     <Project Path="src/Host.Abstractions/Host.Abstractions.csproj" />
     <Project Path="src/Host.Admin/Host.Admin.csproj" />
     <Project Path="src/Host.Contracts/Host.Contracts.csproj" />
@@ -22,8 +22,8 @@
     <Project Path="src/Host.Testing/Host.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="src/Descent.MapForge.Tests/Descent.MapForge.Tests.csproj" />
-    <Project Path="src/Descent.Service.Tests/Descent.Service.Tests.csproj" />
+    <Project Path="src/TF2.Descent.MapForge.Tests/TF2.Descent.MapForge.Tests.csproj" />
+    <Project Path="src/TF2.Descent.Service.Tests/TF2.Descent.Service.Tests.csproj" />
     <Project Path="src/Host.Admin.Tests/Host.Admin.Tests.csproj" />
     <Project Path="src/Host.Data.Tests/Host.Data.Tests.csproj" />
     <Project Path="src/Host.Gateway.Tests/Host.Gateway.Tests.csproj" />

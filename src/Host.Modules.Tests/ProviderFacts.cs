@@ -10,7 +10,7 @@ public class ProviderFacts
 {
     static readonly FixtureModule A = FixtureModule.AlwaysDrop;
     static readonly FixtureModule B = FixtureModule.NeverDrop;
-    const string OtherImage = "registry.local/descent-mod:2";
+    const string OtherImage = "registry.local/tf2-descent-mod:2";
 
     [Fact]
     public async Task An_unknown_hash_is_refused()

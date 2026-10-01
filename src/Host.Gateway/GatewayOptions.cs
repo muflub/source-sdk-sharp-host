@@ -11,7 +11,7 @@ public sealed class GatewayOptions
     /// <summary>/healthz and /metrics for the kubelet.</summary>
     public string Health { get; set; } = "0.0.0.0:5006";
     /// <summary>The service's gateway API (GatewayHealth, GatewayEvents).</summary>
-    public string Service { get; set; } = "http://descent-service:5002";
+    public string Service { get; set; } = "http://tf2-descent-service:5002";
     public TimeSpan SessionExpiry { get; set; } = TimeSpan.FromSeconds(60);
     /// <summary>Handshakes (getchallenges) accepted per client IP per second; more are dropped (Q24).</summary>
     public int HandshakesPerSecond { get; set; } = 2;

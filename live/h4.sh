@@ -9,9 +9,9 @@ DRIVER="$HOME/.dotnet/dotnet $ROOT/bin/Debug/Host.LiveDriver/SourceSharp.Host.Li
 [ -f "$ROOT/bin/Debug/Host.LiveDriver/SourceSharp.Host.LiveDriver.dll" ] || { log "build Host.LiveDriver first"; exit 2; }
 start_admin
 
-LB=$(kc get svc descent-gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}'):27015
+LB=$(kc get svc tf2-descent-gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}'):27015
 log "gateway LoadBalancer $LB"
-hub_ip() { kc get pod -l descent/kind=hub --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}'; }
+hub_ip() { kc get pod -l sourcesharp/kind=hub --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}'; }
 live_hub() { ops instances | json '[i for i in d if i["kind"]=="Hub" and i["state"]=="Live"][0]["podIp"]'; }
 wait_for 120 "a live hub" live_hub
 HUB=$(hub_ip)
@@ -59,8 +59,8 @@ check "no lease left on the crashed instance" no_lease
 BEFORE=$(ops instances | json '",".join(sorted(i["id"]+"/"+(i["podUid"] or "") for i in d if i["state"]=="Live"))')
 log "live before restart: $BEFORE"
 stop_admin
-kc rollout restart statefulset/descent-service >>"$LOG" 2>&1
-kc rollout status statefulset/descent-service --timeout=180s >>"$LOG" 2>&1
+kc rollout restart statefulset/tf2-descent-service >>"$LOG" 2>&1
+kc rollout status statefulset/tf2-descent-service --timeout=180s >>"$LOG" 2>&1
 start_admin
 adopted() { [ "$(ops instances | json '",".join(sorted(i["id"]+"/"+(i["podUid"] or "") for i in d if i["state"]=="Live"))')" = "$BEFORE" ]; }
 wait_for 90 "every live instance adopted with the same pod uid" adopted

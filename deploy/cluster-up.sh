@@ -11,7 +11,7 @@ case "$server" in
   *) echo "cluster-up: refusing $server: not a local cluster" >&2; exit 1 ;;
 esac
 kubectl apply -f "$(dirname "$0")/k8s/registry/registry.yaml"
-kubectl -n descent-registry rollout status deploy/registry --timeout=120s
+kubectl -n sourcesharp-registry rollout status deploy/registry --timeout=120s
 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
-# MOD_IMAGE is applied by `make deploy MOD_IMAGE=…` as the service's DESCENT_Instances__ModImage__* env.
+# MOD_IMAGE is applied by `make deploy MOD_IMAGE=…` as the service's SOURCESHARP_SERVICE_Instances__ModImage__* env.
 echo "cluster-up: registry localhost:30500, namespace $ns, tier $tier${mod_image:+, mod image $mod_image}"

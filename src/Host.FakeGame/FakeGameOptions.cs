@@ -4,7 +4,7 @@ using SourceSharp.Host.Relay;
 
 namespace SourceSharp.Host.FakeGame;
 
-/// <summary>The fake's own knobs (FAKEGAME_* environment). The game API's are DESCENT_*, the relay's RELAY_*.</summary>
+/// <summary>The fake's own knobs (FAKEGAME_* environment). The game API's are SOURCESHARP_HOST_*, the relay's RELAY_*.</summary>
 public sealed class FakeGameOptions
 {
     /// <summary>FakeGameControl gRPC (h2c). Loopback by default; see <see cref="ControlAnyAddress"/>.</summary>
@@ -44,8 +44,8 @@ public sealed record FakeGameConfig(FakeGameOptions Fake, RelayOptions Relay, in
     public string? Note { get; init; }
 
     /// <summary>
-    /// <paramref name="args"/> as the pod passes them to the engine (<c>-port</c>, <c>+map</c>,
-    /// <c>+descent_instance</c>); <paramref name="env"/> the process environment.
+    /// <paramref name="args"/> as the pod passes them to the engine (<c>-port</c>, <c>+map</c>);
+    /// <paramref name="env"/> the process environment (the instance id is SOURCESHARP_HOST_INSTANCE_ID).
     /// </summary>
     public static FakeGameConfig From(IReadOnlyList<string> args, IReadOnlyDictionary<string, string?> env)
     {
@@ -75,7 +75,7 @@ public sealed record FakeGameConfig(FakeGameOptions Fake, RelayOptions Relay, in
             return null;
         }
         var port = int.TryParse(Arg("-port"), out var p) ? p : IPEndPoint.Parse(relay.EngineEndpoint).Port;
-        var instance = Arg("+descent_instance") ?? env.GetValueOrDefault("DESCENT_INSTANCE_ID") ?? "fake";
+        var instance = env.GetValueOrDefault("SOURCESHARP_HOST_INSTANCE_ID") ?? "fake";
         return new FakeGameConfig(fake, relay, port, Arg("+map") ?? "fake_map", instance, args,
             k => env.TryGetValue(k, out var v) ? v : null) { Note = note };
     }

@@ -27,7 +27,7 @@ are in [`docs/plans/plan_host.md`](docs/plans/plan_host.md).
 | path | what |
 |---|---|
 | `src/Host.*` | generic hosting: `Abstractions`, `Proto`, `Contracts`, `Sdk`, `Modules`, `Gateway`, `Instances`, `MapPool`, `Data`, `Admin`, `Relay`, `Launcher`, `FakeGame`, `FakeClient`, `Local` |
-| `src/Descent.*` | game-specific: `Service` (the composition root and main executable) and `MapForge` |
+| `src/TF2.Descent.*` | game-specific: `Service` (the composition root and main executable) and `MapForge` |
 | `src/*.Tests` | xUnit tests, one project per library |
 | `proto/` | the gRPC contract |
 | `deploy/` | Dockerfiles (`service`, `gateway`, `engine`, `fake`), Kubernetes manifests, helper scripts |
@@ -70,7 +70,7 @@ MSBUILDDISABLENODEREUSE=1 ~/.dotnet/dotnet test Host.slnx --nologo -m:1
 
 | tarball | what | needs at run time |
 |---|---|---|
-| `Descent.Service-<version>-linux-x64.tar.gz` | the service: gRPC APIs, workers, map pool, admin | ASP.NET Core 10 runtime |
+| `TF2.Descent.Service-<version>-linux-x64.tar.gz` | the service: gRPC APIs, workers, map pool, admin | ASP.NET Core 10 runtime |
 | `Host.Gateway-<version>-linux-x64.tar.gz` | the UDP gateway | ASP.NET Core 10 runtime |
 | `Host.FakeGame-<version>-linux-x64.tar.gz` | the fake game server used by tests and `TIER=fake` | ASP.NET Core 10 runtime |
 | `Host.Launcher-<version>-linux-x64.tar.gz` | the game pod's launcher (NativeAOT) | nothing (native executable) |
@@ -93,7 +93,7 @@ it needs engine files that only a licensed install provides (`make image-engine`
 ## Running
 
 ```sh
-make run                  # Descent.Service as a local process
+make run                  # TF2.Descent.Service as a local process
 make local                # the service in local mode; the game connects with -hostlocal bin/local/local-host.json
 make gateway              # Host.Gateway
 make fake                 # the fake game server

@@ -1,5 +1,5 @@
 using System.Net;
-using Descent.Service;
+using TF2.Descent.Service;
 using SourceSharp.Host.Abstractions;
 
 namespace SourceSharp.Host.Admin.Tests;

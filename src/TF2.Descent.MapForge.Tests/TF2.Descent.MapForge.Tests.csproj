@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../TF2.Descent.MapForge/TF2.Descent.MapForge.csproj" />
+    <ProjectReference Include="../Host.Testing/Host.Testing.csproj" />
+    <ProjectReference Include="../Host.MapPool/Host.MapPool.csproj" />
+  </ItemGroup>
+</Project>

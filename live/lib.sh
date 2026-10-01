@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 : "${KUBECONFIG:?KUBECONFIG must name the local k3s kubeconfig}"
-NAMESPACE=${NAMESPACE:-descent}
+NAMESPACE=${NAMESPACE:-tf2-descent}
 TIER=${TIER:-fake}
 TIP=$(git -C "$ROOT" rev-parse --short HEAD)
 GATE=${GATE:-$(basename "$0" .sh)}
@@ -31,7 +31,7 @@ require_local_cluster() {
 
 # The admin listener is loopback inside the service pod: reach it through a port-forward we own.
 start_admin() {
-  kc port-forward pod/descent-service-0 "$ADMIN_PORT:5000" >>"$LOG" 2>&1 &
+  kc port-forward pod/tf2-descent-service-0 "$ADMIN_PORT:5000" >>"$LOG" 2>&1 &
   PF_PID=$!
   for _ in $(seq 1 50); do curl -sf "127.0.0.1:$ADMIN_PORT/healthz" >/dev/null 2>&1 && return 0; sleep 0.2; done
   log "admin port-forward did not come up"; return 1

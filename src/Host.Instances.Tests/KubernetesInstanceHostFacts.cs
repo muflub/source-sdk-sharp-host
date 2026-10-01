@@ -35,7 +35,7 @@ public class KubernetesInstanceHostFacts
     {
         var api = new FakeApi();
         var client = new Kubernetes(new KubernetesClientConfiguration { Host = "http://fake-apiserver" }, api);
-        return (new KubernetesInstanceHost(client, "descent", TimeProvider.System) { ReconnectDelay = TimeSpan.Zero }, api);
+        return (new KubernetesInstanceHost(client, "tf2-descent", TimeProvider.System) { ReconnectDelay = TimeSpan.Zero }, api);
     }
 
     static HttpResponseMessage Json(object o, HttpStatusCode code = HttpStatusCode.OK) =>
@@ -46,7 +46,7 @@ public class KubernetesInstanceHostFacts
 
     static V1Pod PodObj(string name, string uid, string phase = "Running", bool ready = true) => new()
     {
-        Metadata = new V1ObjectMeta { Name = name, Uid = uid, Labels = new Dictionary<string, string> { ["app"] = "descent-game" } },
+        Metadata = new V1ObjectMeta { Name = name, Uid = uid, Labels = new Dictionary<string, string> { ["app"] = "sourcesharp-game" } },
         Status = new V1PodStatus
         {
             Phase = phase,
@@ -69,7 +69,7 @@ public class KubernetesInstanceHostFacts
         api.Answer = (_, _) => Json(PodObj("p", "u1"));
         Assert.True(await host.Delete("p", "u1", TimeSpan.FromSeconds(60)));
         var req = api.Requests.Single();
-        Assert.Equal(("DELETE", "/api/v1/namespaces/descent/pods/p"), (req.Method, req.PathAndQuery));
+        Assert.Equal(("DELETE", "/api/v1/namespaces/tf2-descent/pods/p"), (req.Method, req.PathAndQuery));
         using var body = JsonDocument.Parse(req.Body!);
         Assert.Equal("u1", body.RootElement.GetProperty("preconditions").GetProperty("uid").GetString());
         Assert.Equal(60, body.RootElement.GetProperty("gracePeriodSeconds").GetInt64());
@@ -100,7 +100,7 @@ public class KubernetesInstanceHostFacts
             : Json(new V1Secret { Metadata = new V1ObjectMeta { Name = "s" } }, HttpStatusCode.Created);
         var r = await host.Create(Spec());
         Assert.Equal(new PodRef(Spec().Name, "uid-7"), r);
-        Assert.Equal(["/api/v1/namespaces/descent/pods", "/api/v1/namespaces/descent/secrets"], api.Requests.Select(x => x.PathAndQuery));
+        Assert.Equal(["/api/v1/namespaces/tf2-descent/pods", "/api/v1/namespaces/tf2-descent/secrets"], api.Requests.Select(x => x.PathAndQuery));
         using var secret = JsonDocument.Parse(api.Requests[1].Body!);
         Assert.Equal("uid-7", secret.RootElement.GetProperty("metadata").GetProperty("ownerReferences")[0].GetProperty("uid").GetString());
     }
@@ -146,7 +146,7 @@ public class KubernetesInstanceHostFacts
         Assert.Equal(2, lists);
         var watches = api.Requests.Where(r => r.PathAndQuery.Contains("watch=true")).ToList();
         Assert.Contains("resourceVersion=1", watches[0].PathAndQuery);
-        Assert.Contains("labelSelector=app%3Ddescent-game", watches[0].PathAndQuery);
+        Assert.Contains("labelSelector=app%3Dsourcesharp-game", watches[0].PathAndQuery);
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public class KubernetesInstanceHostFacts
     {
         var (host, api) = Make();
         api.Answer = (_, _) => Json(new V1PodList { Items = [PodObj("a", "ua", phase: "Failed", ready: false)] });
-        var s = (await host.List("app=descent-game")).Single();
+        var s = (await host.List("app=sourcesharp-game")).Single();
         Assert.Equal(("a", "ua", PodPhase.Failed, false, "10.42.0.9", 1, (int?)137), (s.Name, s.Uid, s.Phase, s.Ready, s.Ip, s.Restarts, s.ExitCode));
     }
 

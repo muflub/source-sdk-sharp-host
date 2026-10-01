@@ -29,7 +29,7 @@ public class NetworkPolicyFacts
     [Fact]
     public void Gateway_reaches_only_the_sidecar_relay_port()
     {
-        var gateway = Rules("ingress").Single(r => From(r) == "descent-gateway");
+        var gateway = Rules("ingress").Single(r => From(r) == "tf2-descent-gateway");
         Assert.Equal([("TCP", "5010")], Ports(gateway));
     }
 
@@ -44,7 +44,7 @@ public class NetworkPolicyFacts
     [Fact]
     public void Only_the_gateway_and_the_service_are_admitted()
     {
-        Assert.Equal(["descent-gateway", "descent-service"], Rules("ingress").Select(From).Order());
+        Assert.Equal(["tf2-descent-gateway", "tf2-descent-service"], Rules("ingress").Select(From).Order());
     }
 
     [Fact]

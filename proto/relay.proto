@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package descent.relay.v1;
+package sourcesharp.relay.v1;
 
 option csharp_namespace = "SourceSharp.Host.Proto.Relay";
 

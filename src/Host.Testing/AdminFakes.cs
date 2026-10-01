@@ -161,6 +161,7 @@ public sealed class AdminFakeLifecycle(IHostData data) : IInstanceLifecycle
     /// <summary>When false, Kick and Exec refuse with no_stream (as the manager does for a pod with no stream).</summary>
     public bool HasStream { get; set; } = true;
 
+    public Task Leave(string instanceId, string reason, CancellationToken ct = default) => Task.CompletedTask;
     public async Task<InstanceRecord> Drain(string instanceId, string reason, string actor, CancellationToken ct = default)
     {
         Calls.Add($"drain:{instanceId}");

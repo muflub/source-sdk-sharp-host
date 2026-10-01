@@ -2,24 +2,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: descent-gateway
+  name: tf2-descent-gateway
 spec:
   replicas: 1
   strategy: { type: Recreate }
   selector:
-    matchLabels: { app: descent-gateway }
+    matchLabels: { app: tf2-descent-gateway }
   template:
     metadata:
-      labels: { app: descent-gateway }
+      labels: { app: tf2-descent-gateway }
     spec:
       containers:
         - name: gateway
-          image: descent-gateway:latest
+          image: sourcesharp-gateway:latest
           env:
             - name: POD_IP
               valueFrom: { fieldRef: { fieldPath: status.podIP } }
             - name: GATEWAY_Service
-              value: http://descent-service:5002
+              value: http://tf2-descent-service:5002
           ports:
             - { name: game, containerPort: 27015, protocol: UDP }
             - { name: control, containerPort: 5003 }
@@ -35,19 +35,19 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: descent-gateway
+  name: tf2-descent-gateway
 spec:
   type: LoadBalancer
   externalTrafficPolicy: Local
-  selector: { app: descent-gateway }
+  selector: { app: tf2-descent-gateway }
   ports:
     - { name: game, port: 27015, targetPort: 27015, protocol: UDP }
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: descent-gateway-control
+  name: tf2-descent-gateway-control
 spec:
-  selector: { app: descent-gateway }
+  selector: { app: tf2-descent-gateway }
   ports:
     - { name: control, port: 5003, targetPort: 5003, appProtocol: kubernetes.io/h2c }

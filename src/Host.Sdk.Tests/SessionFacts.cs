@@ -10,7 +10,7 @@ public class SessionFacts
 {
     static string Sha(byte[] b) => Convert.ToHexStringLower(SHA256.HashData(b));
 
-    static (RulesModuleFile Module, byte[] Main, byte[] Dep) ModuleOnDisk(int size = 200_000)
+    internal static (RulesModuleFile Module, byte[] Main, byte[] Dep) ModuleOnDisk(int size = 200_000)
     {
         var dir = Directory.CreateTempSubdirectory("sdk-module-").FullName;
         var main = RandomNumberGenerator.GetBytes(size);
@@ -148,7 +148,7 @@ public class SessionFacts
         var o = SdkHarness.FastOptions();
         o.ModuleSource = new FixedModuleSource(module);
         var sdk = h.Sdk("lvl-1", o);
-        var r = await sdk.Pumped(sdk.Session.Booting("descent-3-abc"));
+        var r = await sdk.Pumped(sdk.Session.Booting("tf2_descent-3-abc"));
         Assert.True(r.Ok, r.ToString());
         var a = Assert.Single(h.Modules.Announced);
         Assert.Equal(("Fake.Rules", "1.2.3", Sha(main), HostContract.Version), (a.Assembly, a.Version, a.Sha256, a.ContractVersion));
@@ -169,7 +169,7 @@ public class SessionFacts
         o.ModuleSource = new FixedModuleSource(module);
         o.ModuleChunkBytes = 64 * 1024;
         var sdk = h.Sdk("lvl-1", o);
-        var r = await sdk.Pumped(sdk.Session.Booting("descent-3-abc"));
+        var r = await sdk.Pumped(sdk.Session.Booting("tf2_descent-3-abc"));
         Assert.True(r.Ok, r.ToString());
         Assert.True(r.Value.Uploaded);
         Assert.Equal(1, h.Modules.Uploads);
@@ -197,7 +197,7 @@ public class SessionFacts
         await using var h = await SdkHarness.Start();
         await h.Instance("lvl-1", InstanceKind.Level, 3, InstanceState.Booting);
         var sdk = h.Sdk("lvl-1");
-        var r = await sdk.Pumped(sdk.Session.MapReady(27015, "descent-3-abc"));
+        var r = await sdk.Pumped(sdk.Session.MapReady(27015, "tf2_descent-3-abc"));
         Assert.True(r.Ok, r.ToString());
         Assert.Equal(27015, r.Value);
     }
@@ -214,7 +214,7 @@ public class SessionFacts
         var sdk = h.Sdk("lvl-1", o);
         await Pumping.Until(() => sdk.Metrics.ConnectFailures >= 1, what: "the first attempt failed");
         h.Proxy.Unblock(); // unary calls would get through now; the stream is still backing off
-        var r = await sdk.Pumped(sdk.Session.MapReady(27015, "descent-3-abc"));
+        var r = await sdk.Pumped(sdk.Session.MapReady(27015, "tf2_descent-3-abc"));
         Assert.Equal((HostError.Unreachable, "stream_not_connected"), (r.Error, r.Refusal!.Reason));
         Assert.Equal(0, await h.Data.ReadAsync((tx, _) => tx.Audit.Count(new AuditQuery(Action: "instance.map_ready", Target: "lvl-1"))));
     }
@@ -225,7 +225,7 @@ public class SessionFacts
         await using var h = await SdkHarness.Start();
         await h.Instance("lvl-1", InstanceKind.Level, 3, InstanceState.Booting);
         var sdk = h.Sdk("lvl-1");
-        var r = await sdk.Pumped(sdk.Session.MapReady(27016, "descent-3-abc"));
+        var r = await sdk.Pumped(sdk.Session.MapReady(27016, "tf2_descent-3-abc"));
         Assert.Equal(HostError.PortMismatch, r.Error);
     }
 

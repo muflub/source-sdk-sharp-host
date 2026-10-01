@@ -74,8 +74,8 @@ public class FakeInstanceHostFacts
     public async Task List_filters_by_label()
     {
         var host = new FakeInstanceHost(new FakeTimeProvider());
-        host.Seed("a", new Dictionary<string, string> { ["app"] = "descent-game" });
+        host.Seed("a", new Dictionary<string, string> { ["app"] = "sourcesharp-game" });
         host.Seed("b", new Dictionary<string, string> { ["app"] = "other" });
-        Assert.Equal(["a"], (await host.List("app=descent-game")).Select(p => p.Name));
+        Assert.Equal(["a"], (await host.List("app=sourcesharp-game")).Select(p => p.Name));
     }
 }

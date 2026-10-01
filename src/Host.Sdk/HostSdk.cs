@@ -66,7 +66,7 @@ public sealed class HostSdkOptions
 public sealed class HostSdk : IAsyncDisposable
 {
     /// <summary>Announced in Booting; the service refuses an SDK major it does not speak (§6.6).</summary>
-    public const string Version = "1.0.0";
+    public const string Version = "2.0.0";
 
     readonly SdkCore _core;
     readonly HostSession _session;
@@ -136,7 +136,12 @@ public sealed class HostSdk : IAsyncDisposable
 internal sealed class SdkCore : IDisposable
 {
     readonly CancellationTokenSource _stopping = new();
-    public HostEndpoint Endpoint { get; }
+    HostEndpoint _endpoint;
+    /// <summary>Who this process is to the service; changes only at a same-process hop (<see cref="Rebind"/>).</summary>
+    public HostEndpoint Endpoint => Volatile.Read(ref _endpoint);
+    /// <summary>The same-process hop the service announced (local mode), until the game boots its map.</summary>
+    public HostLocalFile? PendingLocalHop { get => Volatile.Read(ref _pendingLocalHop); set => Volatile.Write(ref _pendingLocalHop, value); }
+    HostLocalFile? _pendingLocalHop;
     public HostSdkOptions Options { get; }
     public HostMetrics Metrics { get; } = new();
     public MainThreadQueue Main { get; } = new();
@@ -153,9 +158,9 @@ internal sealed class SdkCore : IDisposable
 
     public SdkCore(HostEndpoint endpoint, HostSdkOptions options)
     {
-        Endpoint = endpoint;
+        _endpoint = endpoint;
         Options = options;
-        Rpc = new Rpc(endpoint, options, Metrics, _stopping.Token);
+        Rpc = new Rpc(() => Endpoint, options, Metrics, _stopping.Token);
         Leases = new LeaseRegistry(this);
         Instance = new(Rpc.Channel);
         CharacterClient = new(Rpc.Channel);
@@ -173,6 +178,18 @@ internal sealed class SdkCore : IDisposable
     public System.Collections.Concurrent.ConcurrentDictionary<string, PeerIdentity> PeerCache { get; } = new();
 
     public void Cancel() => _stopping.Cancel();
+
+    /// <summary>
+    /// Becomes <paramref name="target"/>'s instance (D-H13 same-process hop). One local service, so
+    /// the channel stays: a target on another service is refused rather than half-followed.
+    /// </summary>
+    public void Rebind(HostLocalFile target)
+    {
+        var next = HostSdkConfig.FromLocal(Endpoint.Mode, target);
+        if (next.Service != Endpoint.Service)
+            throw new InvalidOperationException($"same-process hop to {next.Service}, but this process talks to {Endpoint.Service}");
+        Volatile.Write(ref _endpoint, next with { Sidecar = Endpoint.Sidecar });
+    }
 
     public void Dispose()
     {

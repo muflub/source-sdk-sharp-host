@@ -14,7 +14,7 @@ public sealed record AdminReconcileReport(DateTimeOffset At, IReadOnlyList<Admin
 
 /// <summary>
 /// The ledger policies the admin needs (Descent's rules, §5; plan Q2): they live in
-/// Descent.Service. Methods taking a transaction run inside the admin's own write, so the
+/// TF2.Descent.Service. Methods taking a transaction run inside the admin's own write, so the
 /// change, the lease check and the audit row commit together or not at all.
 /// </summary>
 public interface IAdminLedger

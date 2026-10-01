@@ -16,7 +16,7 @@ public static class GamePodBuilder
     public const string TmpVolume = "tmp";
 
     public static string PodName(InstanceKind kind, string instanceId) =>
-        $"descent-{KindLabel(kind)}-{instanceId.ToLowerInvariant()}";
+        $"sourcesharp-{KindLabel(kind)}-{instanceId.ToLowerInvariant()}";
 
     public static string SecretName(string podName) => podName + "-token";
 
@@ -51,36 +51,38 @@ public static class GamePodBuilder
                 [new MountSpec(GameVolume, "/out")]));
         if (!hub && !o.SkipLevelFetch)
             init.Add(new ContainerSpec("fetch-level", string.IsNullOrEmpty(o.FetchLevelImage) ? o.EngineImage : o.FetchLevelImage,
-                ["/opt/descent/fetch-level.sh", map], [],
-                [new EnvVar("DESCENT_INTERNAL_MAPS", o.InternalMapsUrl)], [],
+                ["/opt/sourcesharp/fetch-level.sh", map], [],
+                [new EnvVar("SOURCESHARP_HOST_INTERNAL_MAPS", o.InternalMapsUrl)], [],
                 [new MountSpec(MapsOverlayVolume, "/game/maps-overlay")]));
 
         List<string> args =
         [
             .. o.Args,
-            "-game", modDir, "-console", "-port", o.GamePort.ToString(), "-ip", "0.0.0.0",
+            "-game", modDir, "-console", "-port", row.ExpectedPort.ToString(), "-ip", "0.0.0.0",
             "+maxplayers", (hub ? o.HubMaxPlayers : o.LevelMaxPlayers).ToString(),
-            "+map", map, "+descent_instance", row.Id,
+            // Before +map: the client reads the download url when it connects to the level.
+            .. (o.FastDlUrl.Length > 0 ? ["+sv_allowdownload", "1", "+sv_downloadurl", o.FastDlUrl] : Array.Empty<string>()),
+            "+map", map,
         ];
 
         var game = new ContainerSpec("game", o.EngineImage,
-            ["/opt/descent/game-entrypoint.sh"], args,
+            ["/opt/sourcesharp/game-entrypoint.sh"], args,
             [
-                new EnvVar("DESCENT_SERVICE", o.ServiceAddress),
+                new EnvVar("SOURCESHARP_HOST_SERVICE", o.ServiceAddress),
                 // The entrypoint tells SourceSharp's Bootstrap which mods.yaml entry to load
-                // (SOURCESHARP_MOD); without it Bootstrap looks for "descent" and refuses (H0a on k3s).
-                new EnvVar("DESCENT_MOD", mod.Name),
-                new EnvVar("DESCENT_INSTANCE_ID", row.Id),
-                new EnvVar("DESCENT_INSTANCE_TOKEN", FromSecret: new SecretKeyRef(secret, SecretKey)),
+                // (SOURCESHARP_MOD); without it Bootstrap looks for its default mod and refuses (H0a on k3s).
+                new EnvVar("SOURCESHARP_MOD", mod.Name),
+                new EnvVar("SOURCESHARP_HOST_INSTANCE_ID", row.Id),
+                new EnvVar("SOURCESHARP_HOST_INSTANCE_TOKEN", FromSecret: new SecretKeyRef(secret, SecretKey)),
                 // The SDK dials PeerInfo here; since D-H11 the launcher serves it in the same process.
-                new EnvVar("DESCENT_SIDECAR_INFO", $"127.0.0.1:{o.InfoPort}"),
+                new EnvVar("SOURCESHARP_HOST_SIDECAR_INFO", $"127.0.0.1:{o.InfoPort}"),
                 // The launcher binds LAUNCHER_* / RELAY_* with .NET configuration: the key after the
                 // prefix must match the property name (EngineDir), so no SHOUTING_SNAKE here.
                 new EnvVar("LAUNCHER_EngineDir", o.EngineDir),
                 new EnvVar("RELAY_Listen", $"0.0.0.0:{o.RelayPort}"),
                 new EnvVar("RELAY_InfoListen", $"127.0.0.1:{o.InfoPort}"),
                 new EnvVar("RELAY_Health", $"0.0.0.0:{o.HealthPort}"),
-                new EnvVar("RELAY_EngineEndpoint", $"127.0.0.1:{o.GamePort}"),
+                new EnvVar("RELAY_EngineEndpoint", $"127.0.0.1:{row.ExpectedPort}"),
                 new EnvVar("RELAY_Mode", o.RelayMode),
                 .. o.ExtraEnv.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => new EnvVar(kv.Key, kv.Value)),
                 new EnvVar("TMPDIR", "/tmp/game"),
@@ -92,7 +94,9 @@ public static class GamePodBuilder
             [
                 new MountSpec(GameVolume, "/game"),
                 new MountSpec(ContentVolume, "/game/content", ReadOnly: true),
-                new MountSpec(MapsOverlayVolume, $"{modDir}/maps/pool"),
+                // The mod's gameinfo adds `game |gameinfo_path|pool`, so the engine finds maps/<name>.bsp
+                // here by plain name and clients ask fastdl for maps/<name>.bsp.bz2 (Q18).
+                new MountSpec(MapsOverlayVolume, $"{modDir}/pool/maps"),
                 new MountSpec(TmpVolume, "/tmp"),
             ],
             hub ? o.HubResources : o.LevelResources,

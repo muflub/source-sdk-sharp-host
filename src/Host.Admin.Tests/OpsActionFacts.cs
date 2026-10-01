@@ -43,7 +43,7 @@ public sealed class OpsActionFacts : WorldFacts
     [Fact]
     public async Task Delete_pod_deletes_by_name_and_uid()
     {
-        var pod = W.Pods.Seed("descent-lvl-1", new Dictionary<string, string> { [GamePodLabels.App] = GamePodLabels.AppValue });
+        var pod = W.Pods.Seed("sourcesharp-lvl-1", new Dictionary<string, string> { [GamePodLabels.App] = GamePodLabels.AppValue });
         await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, pod.Name, pod.Uid,
             "10.42.0.9", 27015, "hash", null, null, "fake", 1, W.D.Clock.GetUtcNow(), null, null, null, null, null, null, null, 0, 27015)));
         Assert.True((await A.DeletePod("lvl-1")).Ok);
@@ -108,7 +108,7 @@ public sealed class OpsActionFacts : WorldFacts
         await Level("aa", LevelState.Ready);
         var storage = new LevelStorage(W.Options.MapPool);
         Directory.CreateDirectory(storage.LevelsDirectory);
-        var bsp = storage.LevelFile(MapIdentity.MapName("descent", 2, "aa"), ".bsp");
+        var bsp = storage.LevelFile(MapIdentity.MapName("tf2_descent", 2, "aa"), ".bsp");
         await File.WriteAllTextAsync(bsp, "x");
         Assert.True((await A.DeleteLevel("aa")).Ok);
         Assert.False(File.Exists(bsp));
@@ -120,7 +120,7 @@ public sealed class OpsActionFacts : WorldFacts
     {
         var job = await W.D.Write(async tx =>
         {
-            var j = await tx.MapJobs.Enqueue(MapJobKind.Link, "link:descent:2:1:0", 3);
+            var j = await tx.MapJobs.Enqueue(MapJobKind.Link, "link:tf2_descent:2:1:0", 3);
             await tx.MapJobs.TakeNext();
             return await tx.MapJobs.Fail(j.Id, "boom", requeue: false);
         });
@@ -141,11 +141,11 @@ public sealed class OpsActionFacts : WorldFacts
     public async Task Upload_then_activate_assigns_the_version_and_audits_both()
     {
         using var s = new MemoryStream(FakePack.Bytes("crypt", ["start", "hall", "stairs"]));
-        var up = await A.UploadPack("descent", "crypt", s, "{}", "first");
+        var up = await A.UploadPack("tf2_descent", "crypt", s, "{}", "first");
         Assert.True(up.Ok, up.Message);
         var pack = Assert.IsType<PackRecord>(up.Value);
-        Assert.True((await A.ActivatePack("descent", [1, 2], pack.Id, true, OldLevelsPolicy.Drain)).Ok);
-        Assert.Equal(pack.Id, (await W.D.Read(tx => tx.Library.Assignment("descent", 2)))!.PackId);
+        Assert.True((await A.ActivatePack("tf2_descent", [1, 2], pack.Id, true, OldLevelsPolicy.Drain)).Ok);
+        Assert.Equal(pack.Id, (await W.D.Read(tx => tx.Library.Assignment("tf2_descent", 2)))!.PackId);
         Assert.Single(await W.Audit("pack.upload"));
         Assert.Equal("admin@localhost", Assert.Single(await W.Audit("pack.activate")).Actor);
     }
@@ -154,7 +154,7 @@ public sealed class OpsActionFacts : WorldFacts
     public async Task A_rejected_upload_is_refused_with_the_report()
     {
         using var s = new MemoryStream(FakePack.Bytes("crypt", ["start", "broken"]));
-        var r = await A.UploadPack("descent", "crypt", s, "{}", null);
+        var r = await A.UploadPack("tf2_descent", "crypt", s, "{}", null);
         Assert.Equal("rejected", r.Reason);
         Assert.Contains("lint", r.Message);
     }
@@ -163,21 +163,21 @@ public sealed class OpsActionFacts : WorldFacts
     public async Task Retire_of_an_assigned_pack_is_refused()
     {
         using var s = new MemoryStream(FakePack.Bytes("crypt", ["start", "stairs"]));
-        var pack = (PackRecord)(await A.UploadPack("descent", "crypt", s, "{}", null)).Value!;
-        await A.ActivatePack("descent", [1], pack.Id, true, OldLevelsPolicy.Drain);
+        var pack = (PackRecord)(await A.UploadPack("tf2_descent", "crypt", s, "{}", null)).Value!;
+        await A.ActivatePack("tf2_descent", [1], pack.Id, true, OldLevelsPolicy.Drain);
         Assert.Equal("pack_assigned", (await A.RetirePack(pack.Id)).Reason);
     }
 
     [Fact]
     public async Task Rebake_queues_a_bake_job_for_the_library()
     {
-        var r = await A.RebakePack("descent", "crypt");
+        var r = await A.RebakePack("tf2_descent", "crypt");
         var job = Assert.IsType<MapJob>(r.Value);
         Assert.Equal(MapJobKind.Bake, job.Kind);
-        Assert.StartsWith("bake:descent:crypt:", job.Key);
+        Assert.StartsWith("bake:tf2_descent:crypt:", job.Key);
     }
 
-    Task<RulesModuleRecord> Module(string sha) => W.D.Write(tx => tx.Modules.Add(new RulesModuleRecord(sha, "Descent.Rules", "1.0", "1", "[]",
+    Task<RulesModuleRecord> Module(string sha) => W.D.Write(tx => tx.Modules.Add(new RulesModuleRecord(sha, "TF2.Descent.Rules", "1.0", "1", "[]",
         tx.Now, "hub-1", ModuleState.Pending, 10)));
 
     [Fact]

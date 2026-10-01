@@ -89,7 +89,7 @@ public interface IInstanceHost
     Task<PodRef> Create(PodSpec spec, CancellationToken ct = default);
 
     /// <summary>
-    /// Pods labelled app=descent-game, forever: reconnects on its own, and every (re)connect
+    /// Pods labelled app=sourcesharp-game, forever: reconnects on its own, and every (re)connect
     /// starts with an Added event per existing pod. Ends only when <paramref name="ct"/> fires.
     /// </summary>
     IAsyncEnumerable<PodEvent> Watch(CancellationToken ct);
@@ -106,14 +106,21 @@ public interface IInstanceHost
 
     /// <summary>The job's phase changes until it succeeds or fails (then the stream ends).</summary>
     IAsyncEnumerable<JobEvent> WatchJob(string name, CancellationToken ct);
+
+    /// <summary>
+    /// The port a new instance's game binds, which becomes its row's ExpectedPort. Every pod has
+    /// its own IP, so a cluster gives every instance <paramref name="configured"/>; a host whose
+    /// games share one machine gives each its own.
+    /// </summary>
+    int GamePort(InstanceKind kind, int configured);
 }
 
 /// <summary>The labels every game pod carries (§7.1).</summary>
 public static class GamePodLabels
 {
     public const string App = "app";
-    public const string AppValue = "descent-game";
-    public const string Instance = "descent/instance";
-    public const string Kind = "descent/kind";
+    public const string AppValue = "sourcesharp-game";
+    public const string Instance = "sourcesharp/instance";
+    public const string Kind = "sourcesharp/kind";
     public const string Selector = App + "=" + AppValue;
 }

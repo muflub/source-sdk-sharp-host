@@ -45,10 +45,10 @@ around a rule.
   `docs/mod-image.md`; the digest each instance actually ran is recorded on
   its row. Don't bake it into an image: it is runtime config so it can change
   without a rebuild here.
-- **Descent-specific logic goes in `Descent.Service`; generic in `Host.*`.**
+- **Descent-specific logic goes in `TF2.Descent.Service`; generic in `Host.*`.**
   The tie-break is ruled (plan Q2): when keeping a thing generic would cost the
   game an abstraction, an interface or a round-trip, it goes in
-  `Descent.Service` and the split is not widened.
+  `TF2.Descent.Service` and the split is not widened.
 
 ## Layout and build
 

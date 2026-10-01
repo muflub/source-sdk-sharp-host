@@ -4,7 +4,7 @@
 # .bsp for the server, .nav3d and .map2d beside it; none of them is downloadable by a client.
 set -eu
 level=${1:?usage: fetch-level.sh <mod>-<depth>-<hash>}
-base=${DESCENT_INTERNAL_MAPS:?DESCENT_INTERNAL_MAPS unset}
+base=${SOURCESHARP_HOST_INTERNAL_MAPS:?SOURCESHARP_HOST_INTERNAL_MAPS unset}
 out=${OUT_DIR:-/maps-overlay}
 mkdir -p "$out"
 for ext in bsp nav3d map2d; do

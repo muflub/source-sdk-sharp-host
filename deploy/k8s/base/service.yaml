@@ -2,33 +2,33 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: descent-service
+  name: tf2-descent-service
 spec:
   replicas: 1
-  serviceName: descent-service-internal
+  serviceName: tf2-descent-service-internal
   selector:
-    matchLabels: { app: descent-service }
+    matchLabels: { app: tf2-descent-service }
   template:
     metadata:
-      labels: { app: descent-service }
+      labels: { app: tf2-descent-service }
     spec:
-      serviceAccountName: descent-service
+      serviceAccountName: tf2-descent-service
       terminationGracePeriodSeconds: 30
       containers:
         - name: service
-          image: descent-service:latest
+          image: tf2-descent-service:latest
           env:
             - name: POD_IP
               valueFrom: { fieldRef: { fieldPath: status.podIP } }
-            - name: DESCENT_Listen__Admin
+            - name: SOURCESHARP_SERVICE_Listen__Admin
               value: "127.0.0.1:5000"
-            - name: DESCENT_Listen__Internal
+            - name: SOURCESHARP_SERVICE_Listen__Internal
               value: "$(POD_IP):5000"
-            - name: DESCENT_Instances__Namespace
+            - name: SOURCESHARP_SERVICE_Instances__Namespace
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
-            - name: DESCENT_Data__Path
+            - name: SOURCESHARP_SERVICE_Data__Path
               value: /data/host.db
-            - name: DESCENT_MapPool__MapsPath
+            - name: SOURCESHARP_SERVICE_MapPool__MapsPath
               value: /maps
           ports:
             - { name: internal, containerPort: 5000 }
@@ -62,9 +62,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: descent-service
+  name: tf2-descent-service
 spec:
-  selector: { app: descent-service }
+  selector: { app: tf2-descent-service }
   ports:
     - { name: game-api, port: 5001, targetPort: 5001, appProtocol: kubernetes.io/h2c }
     - { name: gateway-api, port: 5002, targetPort: 5002, appProtocol: kubernetes.io/h2c }
@@ -74,9 +74,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: descent-service-internal
+  name: tf2-descent-service-internal
 spec:
-  selector: { app: descent-service }
+  selector: { app: tf2-descent-service }
   ports:
     - { name: internal, port: 5000, targetPort: 5000 }
 ---
@@ -84,9 +84,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: descent-fastdl
+  name: tf2-descent-fastdl
 spec:
   type: LoadBalancer
-  selector: { app: descent-service }
+  selector: { app: tf2-descent-service }
   ports:
     - { name: fastdl, port: 5004, targetPort: 5004 }

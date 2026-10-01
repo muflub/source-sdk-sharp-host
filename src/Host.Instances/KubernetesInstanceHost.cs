@@ -11,11 +11,14 @@ namespace SourceSharp.Host.Instances;
 
 /// <summary>
 /// The production <see cref="IInstanceHost"/> (§7.2) over the KubernetesClient package:
-/// one namespace, pods by the app=descent-game label, deletes with a uid precondition, a
+/// one namespace, pods by the app=sourcesharp-game label, deletes with a uid precondition, a
 /// relisting watch that reconnects on its own.
 /// </summary>
 public sealed class KubernetesInstanceHost(IKubernetes client, string ns, TimeProvider clock, ILogger<KubernetesInstanceHost>? log = null) : IInstanceHost
 {
+    /// <summary>Every pod has its own IP: every instance binds the configured port.</summary>
+    public int GamePort(InstanceKind kind, int configured) => configured;
+
     readonly ILogger _log = (ILogger?)log ?? NullLogger.Instance;
 
     /// <summary>How long the watch waits before relisting after an error or a closed stream.</summary>

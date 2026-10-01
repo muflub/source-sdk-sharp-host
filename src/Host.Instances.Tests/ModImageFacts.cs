@@ -8,43 +8,43 @@ namespace SourceSharp.Host.Instances.Tests;
 
 public class ModImageFacts
 {
-    static readonly Dictionary<string, string> Descent = new() { ["org.sourcesharp.mod"] = "descent" };
+    static readonly Dictionary<string, string> Descent = new() { ["org.sourcesharp.mod"] = "tf2_descent" };
 
     static OciModImageInspector Inspector() => new(new HttpClient(), []);
 
     static ImageRef Image(FakeRegistry r, string tag = "1", string? digest = null) =>
-        new() { Registry = r.Host, Name = "descent-mod", Tag = tag, Digest = digest };
+        new() { Registry = r.Host, Name = "tf2-descent-mod", Tag = tag, Digest = digest };
 
     [Fact]
     public async Task Label_is_read_from_a_single_manifest()
     {
         await using var r = new FakeRegistry();
-        r.Push("descent-mod", "1", Descent);
-        Assert.Equal("descent", await Inspector().ModLabel(Image(r)));
+        r.Push("tf2-descent-mod", "1", Descent);
+        Assert.Equal("tf2_descent", await Inspector().ModLabel(Image(r)));
     }
 
     [Fact]
     public async Task Label_is_read_through_an_image_index_choosing_linux_amd64()
     {
         await using var r = new FakeRegistry();
-        r.Push("descent-mod", "1", Descent, asIndex: true);
-        Assert.Equal("descent", await Inspector().ModLabel(Image(r)));
+        r.Push("tf2-descent-mod", "1", Descent, asIndex: true);
+        Assert.Equal("tf2_descent", await Inspector().ModLabel(Image(r)));
     }
 
     [Fact]
     public async Task Label_is_read_by_digest()
     {
         await using var r = new FakeRegistry();
-        var digest = r.Push("descent-mod", "1", Descent);
-        Assert.Equal("descent", await Inspector().ModLabel(Image(r, tag: "nope", digest: digest)));
-        Assert.Contains($"/v2/descent-mod/manifests/{digest}", r.Requests);
+        var digest = r.Push("tf2-descent-mod", "1", Descent);
+        Assert.Equal("tf2_descent", await Inspector().ModLabel(Image(r, tag: "nope", digest: digest)));
+        Assert.Contains($"/v2/tf2-descent-mod/manifests/{digest}", r.Requests);
     }
 
     [Fact]
     public async Task Missing_label_reads_as_null()
     {
         await using var r = new FakeRegistry();
-        r.Push("descent-mod", "1", new Dictionary<string, string> { ["other"] = "x" });
+        r.Push("tf2-descent-mod", "1", new Dictionary<string, string> { ["other"] = "x" });
         Assert.Null(await Inspector().ModLabel(Image(r)));
     }
 
@@ -52,8 +52,8 @@ public class ModImageFacts
     public async Task Anonymous_bearer_challenge_is_answered()
     {
         await using var r = new FakeRegistry { RequireToken = true };
-        r.Push("descent-mod", "1", Descent);
-        Assert.Equal("descent", await Inspector().ModLabel(Image(r)));
+        r.Push("tf2-descent-mod", "1", Descent);
+        Assert.Equal("tf2_descent", await Inspector().ModLabel(Image(r)));
         Assert.Contains("/token", r.Requests);
     }
 
@@ -68,7 +68,7 @@ public class ModImageFacts
     public async Task Config_blob_that_does_not_match_its_digest_is_refused()
     {
         await using var r = new FakeRegistry();
-        r.Push("descent-mod", "1", Descent, corruptConfig: """{"config":{"Labels":{"org.sourcesharp.mod":"descent"}}}"""u8.ToArray());
+        r.Push("tf2-descent-mod", "1", Descent, corruptConfig: """{"config":{"Labels":{"org.sourcesharp.mod":"tf2_descent"}}}"""u8.ToArray());
         await Assert.ThrowsAsync<ModImageException>(() => Inspector().ModLabel(Image(r)));
     }
 
@@ -105,42 +105,42 @@ public class ModImageFacts
     [Fact]
     public async Task Guard_accepts_a_matching_label()
     {
-        var guard = new ModImageGuard(new StubInspector(() => "descent"), new FakeTimeProvider());
-        Assert.Null(await guard.Refusal(new ImageRef { Name = "m" }, "descent", default));
+        var guard = new ModImageGuard(new StubInspector(() => "tf2_descent"), new FakeTimeProvider());
+        Assert.Null(await guard.Refusal(new ImageRef { Name = "m" }, "tf2_descent", default));
     }
 
     [Fact]
     public async Task Guard_refuses_another_mods_label()
     {
         var guard = new ModImageGuard(new StubInspector(() => "othermod"), new FakeTimeProvider());
-        Assert.Contains("'othermod'", await guard.Refusal(new ImageRef { Name = "m" }, "descent", default));
+        Assert.Contains("'othermod'", await guard.Refusal(new ImageRef { Name = "m" }, "tf2_descent", default));
     }
 
     [Fact]
     public async Task Guard_refuses_an_unlabelled_image()
     {
         var guard = new ModImageGuard(new StubInspector(() => null), new FakeTimeProvider());
-        Assert.Contains("no org.sourcesharp.mod label", await guard.Refusal(new ImageRef { Name = "m" }, "descent", default));
+        Assert.Contains("no org.sourcesharp.mod label", await guard.Refusal(new ImageRef { Name = "m" }, "tf2_descent", default));
     }
 
     [Fact]
     public async Task Guard_refuses_when_the_registry_cannot_answer()
     {
         var guard = new ModImageGuard(new StubInspector(() => throw new ModImageException("down")), new FakeTimeProvider());
-        Assert.Contains("could not be inspected", await guard.Refusal(new ImageRef { Name = "m" }, "descent", default));
+        Assert.Contains("could not be inspected", await guard.Refusal(new ImageRef { Name = "m" }, "tf2_descent", default));
     }
 
     [Fact]
     public async Task Guard_caches_an_accepted_image_for_a_minute()
     {
         var clock = new FakeTimeProvider();
-        var stub = new StubInspector(() => "descent");
+        var stub = new StubInspector(() => "tf2_descent");
         var guard = new ModImageGuard(stub, clock);
-        await guard.Refusal(new ImageRef { Name = "m" }, "descent", default);
-        await guard.Refusal(new ImageRef { Name = "m" }, "descent", default);
+        await guard.Refusal(new ImageRef { Name = "m" }, "tf2_descent", default);
+        await guard.Refusal(new ImageRef { Name = "m" }, "tf2_descent", default);
         Assert.Equal(1, stub.Calls);
         clock.Advance(ModImageGuard.CacheFor);
-        await guard.Refusal(new ImageRef { Name = "m" }, "descent", default);
+        await guard.Refusal(new ImageRef { Name = "m" }, "tf2_descent", default);
         Assert.Equal(2, stub.Calls);
     }
 
@@ -153,15 +153,15 @@ public class ModImageFacts
     {
         var listing = Listing("mod-image-good.txt");
         Assert.NotEmpty(listing);
-        Assert.Empty(ModImageContract.Check(listing, "descent"));
+        Assert.Empty(ModImageContract.Check(listing, "tf2_descent"));
     }
 
     [Fact]
     public void Bad_listing_reports_each_missing_and_forbidden_path()
     {
         Assert.Equal(
-            ["missing /game/bin/dotnet/", "missing /game/mods/descent/", "missing /bin/cp or /usr/bin/cp", "forbidden /game/bin/srcds_linux64"],
-            ModImageContract.Check(Listing("mod-image-bad.txt"), "descent"));
+            ["missing /game/bin/dotnet/", "missing /game/mods/tf2_descent/", "missing /game/mods/tf2_descent/mod.dedicated.yaml", "missing /bin/cp or /usr/bin/cp", "forbidden /game/bin/srcds_linux64"],
+            ModImageContract.Check(Listing("mod-image-bad.txt"), "tf2_descent"));
     }
 
     [Fact]
@@ -169,7 +169,7 @@ public class ModImageFacts
     {
         var listing = Listing("mod-image-good.txt").Where(l => !l.StartsWith("./game/bin/managed/", StringComparison.Ordinal) || l == "./game/bin/managed/").ToList();
         Assert.Contains("./game/bin/managed/", listing);
-        Assert.Equal(["missing /game/bin/managed/"], ModImageContract.Check(listing, "descent"));
+        Assert.Equal(["missing /game/bin/managed/"], ModImageContract.Check(listing, "tf2_descent"));
     }
 
     [Fact]
@@ -179,9 +179,9 @@ public class ModImageFacts
         var doc = File.ReadAllText(RepoFiles.Path_("docs", "mod-image.md"));
         var table = doc[doc.IndexOf("## What the image must contain", StringComparison.Ordinal)..doc.IndexOf("## What it must not contain", StringComparison.Ordinal)];
         var documented = table.Split('\n').Where(l => l.StartsWith("| `/", StringComparison.Ordinal))
-            .SelectMany(l => Regex.Matches(l.Split('|')[1], "`(/[^`]+)`").Select(m => m.Groups[1].Value.Replace("<Mod.Name>", "descent")))
+            .SelectMany(l => Regex.Matches(l.Split('|')[1], "`(/[^`]+)`").Select(m => m.Groups[1].Value.Replace("<Mod.Name>", "tf2_descent")))
             .ToList();
-        Assert.Equal(6, documented.Count);
-        Assert.Equal(documented.Order(), ModImageContract.Required("descent").Order());
+        Assert.Equal(7, documented.Count);
+        Assert.Equal(documented.Order(), ModImageContract.Required("tf2_descent").Order());
     }
 }

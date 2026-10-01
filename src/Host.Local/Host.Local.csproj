@@ -4,7 +4,7 @@
     assembly by name at run time; Host.Sdk never references it. Never part of a production image.
   -->
   <ItemGroup>
-    <ProjectReference Include="../Descent.Service/Descent.Service.csproj" />
+    <ProjectReference Include="../TF2.Descent.Service/TF2.Descent.Service.csproj" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

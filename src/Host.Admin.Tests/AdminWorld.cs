@@ -49,7 +49,7 @@ public sealed class AdminWorld : IAsyncDisposable
 
     public Task<InstanceRecord> Instance(string id = "lvl-1", InstanceKind kind = InstanceKind.Level, string? pod = null, string? rules = "fake") =>
         D.Write(tx => tx.Instances.Add(new InstanceRecord(id, kind, InstanceState.Live, kind == InstanceKind.Hub ? 0 : 3, null, null,
-            pod ?? $"descent-{id}", $"uid-{id}", "10.42.0.9", 27015, "hash", null, null, rules, 1234, D.Clock.GetUtcNow(),
+            pod ?? $"tf2_descent-{id}", $"uid-{id}", "10.42.0.9", 27015, "hash", null, null, rules, 1234, D.Clock.GetUtcNow(),
             null, null, null, null, null, null, null, 0, 27015)));
 
     public Task Lease(string characterId, string instanceId = "lvl-1") =>

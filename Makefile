@@ -11,13 +11,13 @@ SOURCE_SHARP_ROOT ?= ../source-sdk-sharp
 
 KUBECONFIG_FILE ?= $(CURDIR)/local-k3s.yaml
 KUBECTL       ?= KUBECONFIG=$(KUBECONFIG_FILE) kubectl
-NAMESPACE     ?= descent
+NAMESPACE     ?= tf2-descent
 REGISTRY      ?= localhost:30500
 TAG           ?= $(shell git rev-parse --short HEAD)
 IMAGE_TOOL    ?= podman
 TIER          ?= fake
 MOD_IMAGE     ?=
-MOD_NAME      ?= descent
+MOD_NAME      ?= tf2_descent
 # The 64-bit libraries anonymous 244310 lacks (plan D-H11): a directory whose bin/linux64/ holds them.
 # Default: the local Steam install of app 243750. Production: a licensed source (docs/ops.md).
 ENGINE_FILES  ?= $(HOME)/.steam/steam/steamapps/common/Source SDK Base 2013 Multiplayer
@@ -68,38 +68,41 @@ publish:
 	@$(MAKE) --no-print-directory maptools-clean
 
 run:
-	$(DOTNET) run --project src/Descent.Service
+	$(DOTNET) run --project src/TF2.Descent.Service
 
 # D-H13: the real service as one local process; the game connects with -hostlocal $(LOCAL_DIR)/local-host.json
 LOCAL_DIR ?= $(CURDIR)/bin/local
 local:
-	$(DOTNET) run --project src/Descent.Service -- --local "$(LOCAL_DIR)"
+	$(DOTNET) run --project src/TF2.Descent.Service -- --local "$(LOCAL_DIR)"
 gateway:
 	$(DOTNET) run --project src/Host.Gateway
 fake:
 	$(DOTNET) run --project src/Host.FakeGame
 
 lint-rooms bake link:
-	$(DOTNET) run --project src/Descent.Service -- $@ $(ARGS)
+	$(DOTNET) run --project src/TF2.Descent.Service -- $@ $(ARGS)
 
 # ---- images (podman or buildah; docker works too with IMAGE_TOOL=docker) ----
 images: image-service image-gateway image-engine image-fake
+# The service is this game's (tf2-descent-service); the gateway and the fake are generic (sourcesharp-*).
+image-service: IMAGE_NAME = tf2-descent-service
+image-gateway image-fake: IMAGE_NAME = sourcesharp-$*
 image-service image-gateway image-fake: image-%:
 	@root=$$(sed -n 's#.*<MapToolsRoot>\(.*\)</MapToolsRoot>.*#\1#p' roots.props); \
 	$(IMAGE_TOOL) build -f deploy/Dockerfile.$* --build-context maptools="$$root" \
-	  --build-arg BUILD_VERSION=$(TAG) -t $(REGISTRY)/descent-$*:$(TAG) .
-	$(IMAGE_TOOL) push --tls-verify=false $(REGISTRY)/descent-$*:$(TAG)
+	  --build-arg BUILD_VERSION=$(TAG) -t $(REGISTRY)/$(IMAGE_NAME):$(TAG) .
+	$(IMAGE_TOOL) push --tls-verify=false $(REGISTRY)/$(IMAGE_NAME):$(TAG)
 
 image-engine:
 	@root=$$(sed -n 's#.*<MapToolsRoot>\(.*\)</MapToolsRoot>.*#\1#p' roots.props); \
 	[ -d "$(ENGINE_FILES)/bin/linux64" ] || { echo "ENGINE_FILES=$(ENGINE_FILES) has no bin/linux64 (docs/ops.md)"; exit 1; }; \
 	$(IMAGE_TOOL) build -f deploy/Dockerfile.engine --build-context maptools="$$root" \
 	  --build-context enginefiles="$(ENGINE_FILES)" \
-	  --build-arg BUILD_VERSION=$(TAG) -t $(REGISTRY)/descent-engine:$(TAG) .
-	$(IMAGE_TOOL) push --tls-verify=false $(REGISTRY)/descent-engine:$(TAG)
+	  --build-arg BUILD_VERSION=$(TAG) -t $(REGISTRY)/sourcesharp-engine:$(TAG) .
+	$(IMAGE_TOOL) push --tls-verify=false $(REGISTRY)/sourcesharp-engine:$(TAG)
 
 mod-image-dev:
-	deploy/mod-image-dev.sh "$(SOURCE_SHARP_ROOT)" "$(REGISTRY)/descent-mod:dev"
+	MOD_NAME=$(MOD_NAME) deploy/mod-image-dev.sh "$(SOURCE_SHARP_ROOT)" "$(REGISTRY)/tf2-descent-mod:dev"
 
 # ---- cluster (local k3s through $(KUBECONFIG_FILE); never a cluster someone else uses) ----
 cluster-up:
@@ -112,18 +115,18 @@ deploy:
 	$(KUBECTL) kustomize $(OVERLAY) | sed -e "s#:latest#:$(TAG)#g" -e "s#__CONTENT_PATH__#$(CONTENT_PATH)#" | $(KUBECTL) apply -f -
 	@if [ -n "$(MOD_IMAGE)" ]; then \
 	  ref="$(MOD_IMAGE)"; reg=$${ref%%/*}; rest=$${ref#*/}; name=$${rest%%:*}; tag=$${rest##*:}; \
-	  $(KUBECTL) -n $(NAMESPACE) set env statefulset/descent-service \
-	    DESCENT_Instances__ModImage__Registry="$$reg" DESCENT_Instances__ModImage__Name="$$name" DESCENT_Instances__ModImage__Tag="$$tag" \
-	    DESCENT_Mod__Name="$(MOD_NAME)"; fi
-	$(KUBECTL) -n $(NAMESPACE) rollout status statefulset/descent-service --timeout=180s
-	$(KUBECTL) -n $(NAMESPACE) rollout status deploy/descent-gateway --timeout=180s
+	  $(KUBECTL) -n $(NAMESPACE) set env statefulset/tf2-descent-service \
+	    SOURCESHARP_SERVICE_Instances__ModImage__Registry="$$reg" SOURCESHARP_SERVICE_Instances__ModImage__Name="$$name" SOURCESHARP_SERVICE_Instances__ModImage__Tag="$$tag" \
+	    SOURCESHARP_SERVICE_Mod__Name="$(MOD_NAME)"; fi
+	$(KUBECTL) -n $(NAMESPACE) rollout status statefulset/tf2-descent-service --timeout=180s
+	$(KUBECTL) -n $(NAMESPACE) rollout status deploy/tf2-descent-gateway --timeout=180s
 undeploy:
 	$(KUBECTL) kustomize $(OVERLAY) | sed -e "s#__CONTENT_PATH__#$(CONTENT_PATH)#" | $(KUBECTL) delete --ignore-not-found --wait=true -f -
-	$(KUBECTL) -n $(NAMESPACE) wait --for=delete pod -l app=descent-game --timeout=90s || true
+	$(KUBECTL) -n $(NAMESPACE) wait --for=delete pod -l app=sourcesharp-game --timeout=90s || true
 admin:
-	$(KUBECTL) -n $(NAMESPACE) port-forward pod/descent-service-0 5000:5000
+	$(KUBECTL) -n $(NAMESPACE) port-forward pod/tf2-descent-service-0 5000:5000
 logs:
-	$(KUBECTL) -n $(NAMESPACE) logs -f statefulset/descent-service
+	$(KUBECTL) -n $(NAMESPACE) logs -f statefulset/tf2-descent-service
 
 live-h0 live-h4 live-h5 live-h6 live-h7 live-h9: live-%:
 	TIER=$(TIER) KUBECONFIG=$(KUBECONFIG_FILE) NAMESPACE=$(NAMESPACE) live/$*.sh

@@ -37,6 +37,7 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
     readonly Dictionary<string, DateTimeOffset> _bootDeadline = [];
     readonly Dictionary<string, DateTimeOffset> _reconnectDeadline = [];
     readonly Dictionary<string, DateTimeOffset> _emptySince = [];
+    readonly HashSet<string> _leaving = [];   // Leave: reaped when the stream closes, nothing else ends them
     readonly List<DateTimeOffset> _hubFailures = [];
     int _hubConsecutiveFailures;
     DateTimeOffset _hubNextAttempt = DateTimeOffset.MinValue;
@@ -253,6 +254,7 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
                 return;
 
             case InstanceState.Live or InstanceState.Suspect or InstanceState.Draining:
+                if (_leaving.Contains(row.Id)) return; // its game is changing map; the stream's close reaps it
                 if (_reconnectDeadline.TryGetValue(row.Id, out var reconnect))
                 {
                     if (now < reconnect) return;
@@ -330,7 +332,7 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
             PodName = name,
             TokenHash = TokenHash(token),
             ModImage = o.SkipModInit ? null : o.ModImage.ToString(),
-            ExpectedPort = o.GamePort,
+            ExpectedPort = _host.GamePort(row.Kind, o.GamePort),
         }, new { pod = name }, Actor, ct);
         _bootDeadline[row.Id] = Now + o.BootTimeout;
 
@@ -342,7 +344,8 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
             await EndWithoutReap(row, InstanceState.Failed, $"create_failed: {e.Message}", null, ct);
             return;
         }
-        await Transition(row.Id, InstanceState.Booting, r => r with { PodUid = pod.Uid }, new { pod = pod.Name, uid = pod.Uid }, Actor, ct);
+        row = await Transition(row.Id, InstanceState.Booting, r => r with { PodUid = pod.Uid }, new { pod = pod.Name, uid = pod.Uid }, Actor, ct);
+        await _hooks.OnBooting(row, ct);
     }
 
     // ================================================================== pod events
@@ -611,6 +614,7 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
             var row = await Row(instanceId, ct);
             if (row.Terminal) throw HostRefusal.Precondition("instance_ended", $"instance {instanceId} is {row.State}");
             _reconnectDeadline.Remove(instanceId);
+            if (_leaving.Contains(instanceId)) return;
             if (players > 0) await MarkOccupied(instanceId, players, ct);
             else if (row.State == InstanceState.Live && row.Kind == InstanceKind.Level) await MarkEmpty(instanceId, ct);
 
@@ -628,8 +632,28 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
         try
         {
             var row = await Row(instanceId, ct);
+            if (_leaving.Remove(instanceId) && row.State == InstanceState.Draining)
+            {
+                await Reap(row, row.Reason ?? "left", failure: false, ct);
+                return;
+            }
             if (row.Terminal || row.State is InstanceState.Draining or InstanceState.Requested or InstanceState.LevelReady) return;
             await EndWithoutReap(row, InstanceState.Crashed, "stream_closed", null, ct);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task Leave(string instanceId, string reason, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            var row = await Row(instanceId, ct);
+            if (row.Terminal || !_leaving.Add(instanceId)) return;
+            if (row.State != InstanceState.Draining)
+                await Transition(row.Id, InstanceState.Draining, r => r with { DrainAt = Now, Reason = reason }, new { reason }, Actor, ct);
+            _emptySince.Remove(row.Id);
+            _bootDeadline.Remove(row.Id);
         }
         finally { _lock.Release(); }
     }

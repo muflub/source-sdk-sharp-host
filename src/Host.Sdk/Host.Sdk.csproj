@@ -1,4 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The package version is HostSdk.Version (a fact compares them): the wire changes with the
+         major, so two SDKs that speak different wires must never share a NuGet identity. -->
+    <Version>2.0.0</Version>
+  </PropertyGroup>
   <ItemGroup>
     <!-- Host.Proto ships inside this package (plan §6.6 "Delivery"): no SourceSharp.Host.Proto package
          exists, so the reference is private and its DLL is added to lib/ below. -->
