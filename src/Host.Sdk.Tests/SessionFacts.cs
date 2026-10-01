@@ -33,6 +33,26 @@ public class SessionFacts
     }
 
     [Fact]
+    public async Task A_service_that_acks_late_keeps_the_stream_and_its_row()
+    {
+        // A loaded test host acks hundreds of ms late. The SDK abandoning that live stream is a
+        // stream close the service sees, which crashes the row (§6.1) and fails every later call
+        // with bad_token: the harness's silence budget must outlast such a delay.
+        await using var h = await SdkHarness.Start();
+        await h.Instance("hub-1", InstanceKind.Hub);
+        h.Proxy.DelayDown(TimeSpan.FromMilliseconds(600));
+        var started = DateTime.UtcNow;
+        var sdk = h.Sdk("hub-1");
+        await sdk.PumpUntil(() => sdk.Metrics.HeartbeatsAcked >= 1, what: "a late ack");
+        Assert.True(DateTime.UtcNow - started >= TimeSpan.FromMilliseconds(600), "the delay never took effect");
+        h.Proxy.DelayDown(TimeSpan.Zero);
+        await sdk.PumpUntil(() => sdk.Metrics.HeartbeatsAcked >= 5, what: "acks after the delay");
+        var row = await h.Data.ReadAsync((tx, _) => tx.Instances.Get("hub-1"));
+        Assert.Equal((InstanceState.Live, null, 0L), (row!.State, row.Reason, sdk.Metrics.ConnectFailures));
+        Assert.True((await sdk.Pumped(sdk.Characters.Create("76561198000000001", "scout", "Ann"))).Ok);
+    }
+
+    [Fact]
     public async Task A_main_thread_that_stops_pumping_stops_the_heartbeats_and_resumes_them_when_it_pumps()
     {
         await using var h = await SdkHarness.Start();
