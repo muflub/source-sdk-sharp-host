@@ -123,6 +123,29 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_instance_row_written_after_the_start_is_not_crashed_by_the_adoption()
+    {
+        // The manager adopts in the background: a row written before it has listed the pods has
+        // no pod there and is crashed ("adoption: no pod"), and the devapi facts then got 501
+        // ("has no reachable pod"). Here the listing is held back 300 ms so that window is wide.
+        var listed = Task.Delay(300);
+        await using var host = await AdminServiceHost.StartAsync(pods: sp =>
+            new AdminServiceHost.GatedListing(new SourceSharp.Host.Testing.FakeInstanceHost(sp.GetRequiredService<TimeProvider>()), listed));
+        await host.World.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "descent-lvl-1", "uid",
+            "127.0.0.1", 27015, "hash", null, null, "fake", 1, tx.Now, null, null, null, null, null, null, null, 0, 27015)));
+        await listed;
+        var data = host.App.Services.GetRequiredService<IHostData>();
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!(await data.ReadAsync((tx, _) => tx.Instances.NonTerminal())).Any(r => r.Kind == InstanceKind.Hub))
+        {
+            Assert.True(DateTime.UtcNow < until, "the manager never ensured its hub (adoption never finished)");
+            await Task.Delay(10);
+        }
+        var row = await data.ReadAsync((tx, _) => tx.Instances.Get("lvl-1"));
+        Assert.Equal((InstanceState.Live, null), (row!.State, row.Reason));
+    }
+
+    [Fact]
     public async Task The_devapi_proxy_forwards_a_get_to_the_pods_port()
     {
         await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "descent-lvl-1", "uid",
