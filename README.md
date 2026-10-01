@@ -42,7 +42,7 @@ Requirements:
   The Makefile uses `~/.dotnet/dotnet`; pass `DOTNET=dotnet` to use another install.
 - `git` and `make`.
 - `clang` and `zlib1g-dev` only for `make publish` (`Host.Launcher` is NativeAOT).
-- [`source-sdk-map-tools`](https://github.com/muflub/hl2sdk_tools_sharp), the one build-time
+- [`source-sdk-map-tools`](https://github.com/muflub/source-sdk-sharp-map-tools), the one build-time
   dependency, referenced as a library (`make setup` clones it).
 
 ```sh

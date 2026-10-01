@@ -5,7 +5,7 @@ SHELL := /bin/bash
 DOTNET        ?= $(HOME)/.dotnet/dotnet
 CONFIG        ?= Debug
 MAPTOOLS_ROOT ?= ../source-sdk-map-tools
-MAPTOOLS_REPO ?= https://github.com/muflub/hl2sdk_tools_sharp.git
+MAPTOOLS_REPO ?= https://github.com/muflub/source-sdk-sharp-map-tools.git
 # dev only: `make mod-image-dev` packs a mod image from its bin/release/. Not a build root.
 SOURCE_SHARP_ROOT ?= ../source-sdk-sharp
 

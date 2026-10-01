@@ -8,7 +8,7 @@
 #                      The engine image is not built here: it needs licensed engine files.
 #
 # The map tools (source-sdk-map-tools, the only build root) are the public repository
-# muflub/hl2sdk_tools_sharp, checked out beside this one. The repository variable MAPTOOLS_REF
+# muflub/source-sdk-sharp-map-tools, checked out beside this one. The repository variable MAPTOOLS_REF
 # pins the ref built against (default: main).
 name: linux
 
@@ -47,7 +47,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          repository: muflub/hl2sdk_tools_sharp
+          repository: muflub/source-sdk-sharp-map-tools
           ref: ${{ vars.MAPTOOLS_REF || 'main' }}
           path: maptools
           persist-credentials: false
@@ -126,7 +126,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          repository: muflub/hl2sdk_tools_sharp
+          repository: muflub/source-sdk-sharp-map-tools
           ref: ${{ vars.MAPTOOLS_REF || 'main' }}
           path: maptools
           persist-credentials: false
