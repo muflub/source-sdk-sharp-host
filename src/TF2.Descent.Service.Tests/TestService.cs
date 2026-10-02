@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using SourceSharp.Host.Testing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,12 +13,11 @@ public sealed class TestService : IAsyncDisposable
     public required WebApplication App { get; init; }
     public required BoundListeners Bound { get; init; }
 
-    public static int FreePort()
-    {
-        using var l = new TcpListener(IPAddress.Loopback, 0);
-        l.Start();
-        return ((IPEndPoint)l.LocalEndpoint).Port;
-    }
+    /// <summary>A port free on <see cref="TestLoopback.Address"/>, this process's own loopback address.</summary>
+    public static int FreePort() => TestLoopback.FreePort();
+
+    /// <summary>This process's loopback address: bind what <see cref="FreePort"/> picked here, not on 127.0.0.1.</summary>
+    public static string Loopback => TestLoopback.Host;
 
     public static WebApplication Build(Dictionary<string, string?> settings, Action<WebApplicationBuilder>? configure = null) =>
         ServiceApp.Build(["--environment", "Development"], b =>

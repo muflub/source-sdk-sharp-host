@@ -69,13 +69,13 @@ public sealed class E2eWorld : IAsyncDisposable
         var all = new Dictionary<string, string?>
         {
             ["Listen:Admin"] = "127.0.0.1:0", ["Listen:Internal"] = "127.0.0.1:0", ["Listen:FastDl"] = "127.0.0.1:0",
-            ["Listen:GameApi"] = $"127.0.0.1:{gameApi}", ["Listen:GatewayApi"] = $"127.0.0.1:{gatewayApi}",
-            ["Listen:GatewayControl"] = $"http://127.0.0.1:{gatewayControl}",
+            ["Listen:GameApi"] = $"{TestService.Loopback}:{gameApi}", ["Listen:GatewayApi"] = $"{TestService.Loopback}:{gatewayApi}",
+            ["Listen:GatewayControl"] = $"http://{TestService.Loopback}:{gatewayControl}",
             ["Data:Path"] = ":memory:",
             ["MapPool:MapsPath"] = Path.Combine(Path.GetTempPath(), $"e2e-maps-{Guid.NewGuid():N}"),
             ["MapPool:DefaultPerDepth"] = "0",
             ["Modules:Path"] = modules,
-            ["Instances:ServiceAddress"] = $"127.0.0.1:{gameApi}",
+            ["Instances:ServiceAddress"] = $"{TestService.Loopback}:{gameApi}",
             ["Instances:EngineImage"] = "sourcesharp-fake:test",
             ["Instances:SkipModInit"] = "true",
             ["Instances:VerifyModLabel"] = "false",
@@ -98,8 +98,8 @@ public sealed class E2eWorld : IAsyncDisposable
         });
         var gateway = GatewayApp.Build(["--environment", "Development"], b => b.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["GatewayId"] = "gw-e2e", ["Public"] = "127.0.0.1:0", ["Control"] = $"127.0.0.1:{gatewayControl}", ["Health"] = "127.0.0.1:0",
-            ["Service"] = $"http://127.0.0.1:{gatewayApi}", ["HandshakesPerSecond"] = "1000", ["PingInterval"] = "00:00:00.500",
+            ["GatewayId"] = "gw-e2e", ["Public"] = "127.0.0.1:0", ["Control"] = $"{TestService.Loopback}:{gatewayControl}", ["Health"] = "127.0.0.1:0",
+            ["Service"] = $"http://{TestService.Loopback}:{gatewayApi}", ["HandshakesPerSecond"] = "1000", ["PingInterval"] = "00:00:00.500",
             ["Serilog:MinimumLevel:Default"] = "Warning",
         }));
         try

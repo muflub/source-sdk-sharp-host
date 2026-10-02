@@ -230,7 +230,9 @@ public class CharacterFacts
         var lost = new List<LeaseLostReason>();
         lease.LeaseLost += (_, why, _) => lost.Add(why);
 
-        h.ServiceClock!.Advance(TimeSpan.FromSeconds(31));
+        // Past both the 30 s lease and the service's start grace (Instances.AdoptReconnect, 60 s):
+        // a just-started service expires nothing until its pods have had the reconnect window.
+        h.ServiceClock!.Advance(TimeSpan.FromSeconds(61));
         // The service's maintenance worker (on the same fake clock) releases the expired lease and
         // sends LeaseRevoked down the stream: the SDK learns before its next write.
         await sdk.PumpUntil(() => lost.Count > 0, what: "LeaseLost");

@@ -14,6 +14,8 @@ public static class GamePodBuilder
     public const string ContentVolume = "content";
     public const string MapsOverlayVolume = "maps-overlay";
     public const string TmpVolume = "tmp";
+    /// <summary>Where the fetch-level init container mounts the maps overlay and writes the level's files.</summary>
+    public const string FetchLevelMount = "/game/maps-overlay";
 
     public static string PodName(InstanceKind kind, string instanceId) =>
         $"sourcesharp-{KindLabel(kind)}-{instanceId.ToLowerInvariant()}";
@@ -52,8 +54,10 @@ public static class GamePodBuilder
         if (!hub && !o.SkipLevelFetch)
             init.Add(new ContainerSpec("fetch-level", string.IsNullOrEmpty(o.FetchLevelImage) ? o.EngineImage : o.FetchLevelImage,
                 ["/opt/sourcesharp/fetch-level.sh", map], [],
-                [new EnvVar("SOURCESHARP_HOST_INTERNAL_MAPS", o.InternalMapsUrl)], [],
-                [new MountSpec(MapsOverlayVolume, "/game/maps-overlay")]));
+                // OUT_DIR is the overlay's mount here: the files must land on the volume the game
+                // container mounts at <mod>/pool/maps, not in the init container's own filesystem.
+                [new EnvVar("SOURCESHARP_HOST_INTERNAL_MAPS", o.InternalMapsUrl), new EnvVar("OUT_DIR", FetchLevelMount)], [],
+                [new MountSpec(MapsOverlayVolume, FetchLevelMount)]));
 
         List<string> args =
         [

@@ -27,11 +27,30 @@ public sealed class Maintenance(
     ServiceOptions options,
     MaintenanceState state,
     TimeProvider clock,
-    ILogger<Maintenance> log) : BackgroundService
+    ILogger<Maintenance> log,
+    IHostApplicationLifetime? lifetime = null) : BackgroundService
 {
-    /// <summary>§4.3: expired leases are released every few seconds, audited; the reserve goes with them; the pod hears LeaseRevoked.</summary>
+    readonly DateTimeOffset _started = clock.GetUtcNow();
+
+    /// <summary>
+    /// §4.3: expired leases are released every few seconds, audited; the reserve goes with them;
+    /// the pod hears LeaseRevoked. Not in the first Instances.AdoptReconnect after this service
+    /// started: a lease whose deadline passed while the service was down is not the pod's fault.
+    /// A pod that reconnects in the window renews its leases with its heartbeats (and a re-lease
+    /// from it gets the same lease back); one that does not is crashed by the instance manager,
+    /// which releases its leases anyway. Without this a rollout longer than Lease.Ttl lost every player.
+    /// Nor once this service is stopping: its pods' streams ended at ApplicationStopping, so their
+    /// heartbeats renew nothing here while it drains (measured: the old service expired a lease
+    /// 30 s into its shutdown, 2 s before the new one started). The next service judges it.
+    /// </summary>
     public async Task<int> ExpireLeases(CancellationToken ct)
     {
+        if (lifetime?.ApplicationStopping.IsCancellationRequested == true
+            || clock.GetUtcNow() < _started + options.Instances.AdoptReconnect)
+        {
+            state.LastLeaseSweep = clock.GetUtcNow();
+            return 0;
+        }
         var expired = await data.WriteAsync(async (tx, _) =>
         {
             var gone = new List<Lease>();

@@ -1,6 +1,7 @@
 using TF2.Descent.Service.Tests.Ledger;
 using TF2.Descent.Service.Workers;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Hosting;
 using SourceSharp.Host.Abstractions;
 
 namespace TF2.Descent.Service.Tests.Workers;
@@ -27,6 +28,7 @@ public class MaintenanceFacts
     {
         await using var h = await LedgerHarness.Create();
         var (m, c, _) = Worker(h);
+        h.D.Clock.Advance(h.Options.Instances.AdoptReconnect); // past the start's grace (the facts below)
         var ch = await h.Character();
         await h.Lease(ch, h.Level);
         await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 2)], h.Req()));
@@ -37,6 +39,100 @@ public class MaintenanceFacts
         Assert.Equal(0, await h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Reserve))));
         Assert.Contains($"{h.Level.Id} LeaseRevoked {{ CharacterId = {ch}, Reason = lease_expired }}", c.Sent);
         Assert.Single(await h.R(tx => tx.Audit.List(new AuditQuery(Action: "lease.expired"))));
+    }
+
+    /// <summary>A lease whose deadline passed while the service was down: the service has just started.</summary>
+    static async Task<(LedgerHarness H, string Ch)> LeaseExpiredDuringAnOutage()
+    {
+        var h = await LedgerHarness.Create();
+        var ch = await h.Character();
+        await h.Lease(ch, h.Level);
+        h.D.Clock.Advance(h.Options.Lease.Ttl + TimeSpan.FromSeconds(8)); // a 38 s restart (measured on k3s)
+        Assert.NotEmpty(await h.R(tx => tx.Leases.Expired())); // the stimulus: it is past its deadline
+        return (h, ch);
+    }
+
+    [Fact]
+    public async Task A_restarted_service_does_not_expire_a_lease_in_its_reconnect_window()
+    {
+        var (h, ch) = await LeaseExpiredDuringAnOutage();
+        await using var _ = h;
+        var (m, c, _) = Worker(h);
+        Assert.Equal(0, await m.ExpireLeases(default));
+        Assert.NotNull(await h.R(tx => tx.Leases.Get(ch)));
+        Assert.Empty(c.Sent);
+    }
+
+    [Fact]
+    public async Task A_pod_that_reconnects_in_the_window_keeps_its_lease_after_it()
+    {
+        var (h, ch) = await LeaseExpiredDuringAnOutage();
+        await using var _ = h;
+        var (m, _, _) = Worker(h);
+        h.D.Clock.Advance(TimeSpan.FromSeconds(10));
+        await h.W(tx => tx.Leases.RenewForInstance(h.Level.Id, h.Options.Lease.Ttl)); // its heartbeats resume
+        h.D.Clock.Advance(h.Options.Instances.AdoptReconnect);
+        await h.W(tx => tx.Leases.RenewForInstance(h.Level.Id, h.Options.Lease.Ttl));
+        Assert.Equal(0, await m.ExpireLeases(default));
+        Assert.NotNull(await h.R(tx => tx.Leases.Get(ch)));
+    }
+
+    sealed class Lifetime : IHostApplicationLifetime
+    {
+        readonly CancellationTokenSource _stopping = new();
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => _stopping.Token;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() => _stopping.Cancel();
+    }
+
+    [Fact]
+    public async Task A_stopping_service_expires_no_lease()
+    {
+        await using var h = await LedgerHarness.Create();
+        var lifetime = new Lifetime();
+        var m = new Maintenance(h.D.Data, h.Ledger, new Commands(), h.Options, new MaintenanceState(), h.D.Clock, NullLogger<Maintenance>.Instance, lifetime);
+        h.D.Clock.Advance(h.Options.Instances.AdoptReconnect); // past the start's grace
+        var ch = await h.Character();
+        await h.Lease(ch, h.Level);
+        h.D.Clock.Advance(h.Options.Lease.Ttl + TimeSpan.FromSeconds(1));
+        lifetime.StopApplication(); // the rollout's SIGTERM: the pods' streams have ended
+        Assert.Equal(0, await m.ExpireLeases(default));
+        Assert.NotNull(await h.R(tx => tx.Leases.Get(ch)));
+    }
+
+    [Fact]
+    public async Task A_running_service_past_its_grace_expires_the_same_lease()
+    {
+        await using var h = await LedgerHarness.Create();
+        var m = new Maintenance(h.D.Data, h.Ledger, new Commands(), h.Options, new MaintenanceState(), h.D.Clock, NullLogger<Maintenance>.Instance, new Lifetime());
+        h.D.Clock.Advance(h.Options.Instances.AdoptReconnect);
+        var ch = await h.Character();
+        await h.Lease(ch, h.Level);
+        h.D.Clock.Advance(h.Options.Lease.Ttl + TimeSpan.FromSeconds(1));
+        Assert.Equal(1, await m.ExpireLeases(default)); // the control: only stopping spares it
+    }
+
+    [Fact]
+    public async Task A_lease_nobody_renews_expires_once_the_window_has_passed()
+    {
+        var (h, ch) = await LeaseExpiredDuringAnOutage();
+        await using var _ = h;
+        var (m, _, _) = Worker(h);
+        h.D.Clock.Advance(h.Options.Instances.AdoptReconnect);
+        Assert.Equal(1, await m.ExpireLeases(default));
+        Assert.Null(await h.R(tx => tx.Leases.Get(ch)));
+    }
+
+    [Fact]
+    public async Task A_re_lease_from_the_holding_instance_after_the_outage_gets_the_same_lease()
+    {
+        var (h, ch) = await LeaseExpiredDuringAnOutage();
+        await using var _ = h;
+        var before = await h.R(tx => tx.Leases.Get(ch));
+        var again = await h.W(tx => h.Ledger.LeaseCharacter(tx, h.Level, ch));
+        Assert.Equal(before!.Token, again.Lease.Token);
+        Assert.Equal(h.Level.Id, again.Lease.InstanceId);
     }
 
     [Fact]

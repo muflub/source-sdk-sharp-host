@@ -77,6 +77,12 @@ public sealed class GatewayRegistry(
             var s = await tx.Sessions.Get(e.SessionId);
             await tx.Sessions.Close(e.SessionId, e.Reason.Length > 0 ? e.Reason : "closed");
             if (s?.SteamId is not { } steamId || s.InstanceId is not { } instanceId) return true;
+            // Only the player's last session on that instance gives the lease up: a taken-over or
+            // carried session closing late (a gateway rollout, a client back from a new port) must
+            // not release the lease its successor is playing on.
+            if (s.State == "closed"
+                || (await tx.Sessions.ForSteamId(steamId)).Any(o => o.Id != s.Id && o.State == "open" && o.InstanceId == instanceId))
+                return true;
             // §4.3: an identified session's close releases the lease at once; the reserve goes with it.
             foreach (var ch in await tx.Characters.List(steamId))
                 if (await tx.Leases.Get(ch.Id) is { } lease && lease.InstanceId == instanceId)

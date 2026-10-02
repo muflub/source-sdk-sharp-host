@@ -39,6 +39,15 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: { name: SOURCESHARP_SERVICE_Instances__VerifyModLabel, value: "false" }
+      # Clients on this box download levels from the fastdl LoadBalancer, which k3s's servicelb
+      # publishes on the node's 5004; the client appends maps/<name>.bsp.bz2. Local only.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: SOURCESHARP_SERVICE_Instances__FastDlUrl, value: "http://127.0.0.1:5004/" }
+      # Local only: a baked pack activates itself for its depths (no admin step on a dev cluster).
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: SOURCESHARP_SERVICE_MapPool__AutoActivateBakes, value: "true" }
       - op: replace
         path: /spec/template/spec/containers/0/resources
         value: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 2Gi } }

@@ -5,9 +5,10 @@ using SourceSharp.Host.Abstractions;
 namespace TF2.Descent.Service;
 
 /// <summary>
-/// Read-only JSON for the live gates and operators (loopback admin listener only, reached with
+/// JSON for the live gates and operators (loopback admin listener only, reached with
 /// `make admin`): the gates assert on row transitions, audit counts and released leases (CLAUDE.md),
-/// which the Blazor pages do not serve as data.
+/// which the Blazor pages do not serve as data. The few actions here (reconcile, exec, drain) are
+/// the admin UI's own lifecycle calls, audited the same way, for a script to drive.
 /// </summary>
 public static class OpsEndpoints
 {
@@ -62,6 +63,22 @@ public static class OpsEndpoints
             await data.ReadAsync((tx, _) => tx.Items.Get(id), ct) is { } i
                 ? Results.Json(new { i.Id, ownerKind = i.OwnerKind.ToString(), i.OwnerId, i.InstanceId })
                 : Results.NotFound()).On(ListenerRole.Admin);
+
+        // A console command on an instance, as the admin UI's Exec (audited instance.exec): a gate
+        // drives the game's own commands with it (P9: travel from a pod that runs without the dev API).
+        ops.MapPost("/instances/{id}/exec", async (IInstanceLifecycle life, string id, OpsCommand body, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(body.Command)) return Results.BadRequest(new { error = "command is required" });
+            try { await life.Exec(id, body.Command, OpsActor, ct); return Results.Accepted(); }
+            catch (HostRefusal e) { return Results.Conflict(new { error = e.Reason, detail = e.Message }); }
+        }).On(ListenerRole.Admin);
+
+        // Drain, as the admin UI's: no new routes, reaped when empty; a drained hub is replaced.
+        ops.MapPost("/instances/{id}/drain", async (IInstanceLifecycle life, string id, string? reason, CancellationToken ct) =>
+        {
+            try { var row = await life.Drain(id, reason ?? "ops", OpsActor, ct); return Results.Ok(new { row.Id, state = row.State.ToString() }); }
+            catch (HostRefusal e) { return Results.Conflict(new { error = e.Reason, detail = e.Message }); }
+        }).On(ListenerRole.Admin);
 
         // §5.4 on demand, report only (the cached sums are not fixed here): the soak's invariants.
         ops.MapPost("/reconcile", (IHostData data, IAdminLedger ledger, CancellationToken ct) =>
@@ -118,4 +135,8 @@ public static class OpsEndpoints
     }
 
     static bool FakeTier(IWebHostEnvironment env, ServiceOptions o) => env.IsDevelopment() && o.Instances.SkipLevelFetch;
+
+    const string OpsActor = "ops@admin";
+
+    public sealed record OpsCommand(string Command);
 }

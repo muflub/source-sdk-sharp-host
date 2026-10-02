@@ -28,7 +28,7 @@ SLN           := Host.slnx
 .PHONY: setup build test check pack publish clean run local gateway fake \
         images image-service image-gateway image-engine image-fake \
         cluster-up cluster-down deploy undeploy admin logs mod-image-dev \
-        lint-rooms bake link live-h0 live-h4 live-h5 live-h6 live-h7 live-h9 maptools-clean
+        bake live-h0 live-h4 live-h5 live-h6 live-h7 live-h9 maptools-clean
 
 setup:
 	@if [ ! -d "$(MAPTOOLS_ROOT)/.git" ]; then git clone "$(MAPTOOLS_REPO)" "$(MAPTOOLS_ROOT)"; fi
@@ -79,7 +79,7 @@ gateway:
 fake:
 	$(DOTNET) run --project src/Host.FakeGame
 
-lint-rooms bake link:
+bake:
 	$(DOTNET) run --project src/TF2.Descent.Service -- $@ $(ARGS)
 
 # ---- images (podman or buildah; docker works too with IMAGE_TOOL=docker) ----

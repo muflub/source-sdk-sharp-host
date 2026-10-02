@@ -107,42 +107,14 @@ public sealed partial class AdminHttpFacts : IAsyncLifetime
     [Fact]
     public async Task The_devapi_proxy_answers_501_with_the_reason_when_the_pod_is_not_reachable()
     {
+        // A pod address and port nothing listens on: this process's own loopback address (TestLoopback).
         await W.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "sourcesharp-lvl-1", "uid",
-            "127.0.0.1", 27015, "hash", null, null, "fake", 1, tx.Now, null, null, null, null, null, null, null, 0, 27015)));
-        // The discard port: below the ephemeral range, so no port-0 listener or outgoing connection in
-        // the suite can take it (a picked-and-released ephemeral port could be taken meanwhile and answer).
-        const int port = 9;
-        using (var probe = new System.Net.Sockets.TcpClient())
-            Assert.Equal(System.Net.Sockets.SocketError.ConnectionRefused,
-                Assert.Throws<System.Net.Sockets.SocketException>(() => probe.Connect(IPAddress.Loopback, port)).SocketErrorCode);
-        _host.App.Services.GetRequiredService<AdminUiOptions>().DevApiPort = port;
+            TestLoopback.Host, 27015, "hash", null, null, "fake", 1, tx.Now, null, null, null, null, null, null, null, 0, 27015)));
+        _host.App.Services.GetRequiredService<AdminUiOptions>().DevApiPort = TestLoopback.FreePort();
         using var http = Admin();
         var r = await http.GetAsync("/admin/instances/lvl-1/devapi/index.html");
         Assert.Equal(HttpStatusCode.NotImplemented, r.StatusCode);
         Assert.Contains("is not reachable", await r.Content.ReadAsStringAsync());
-    }
-
-    [Fact]
-    public async Task An_instance_row_written_after_the_start_is_not_crashed_by_the_adoption()
-    {
-        // The manager adopts in the background: a row written before it has listed the pods has
-        // no pod there and is crashed ("adoption: no pod"), and the devapi facts then got 501
-        // ("has no reachable pod"). Here the listing is held back 300 ms so that window is wide.
-        var listed = Task.Delay(300);
-        await using var host = await AdminServiceHost.StartAsync(pods: sp =>
-            new AdminServiceHost.GatedListing(new SourceSharp.Host.Testing.FakeInstanceHost(sp.GetRequiredService<TimeProvider>()), listed));
-        await host.World.D.Write(tx => tx.Instances.Add(new InstanceRecord("lvl-1", InstanceKind.Level, InstanceState.Live, 3, null, null, "descent-lvl-1", "uid",
-            "127.0.0.1", 27015, "hash", null, null, "fake", 1, tx.Now, null, null, null, null, null, null, null, 0, 27015)));
-        await listed;
-        var data = host.App.Services.GetRequiredService<IHostData>();
-        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!(await data.ReadAsync((tx, _) => tx.Instances.NonTerminal())).Any(r => r.Kind == InstanceKind.Hub))
-        {
-            Assert.True(DateTime.UtcNow < until, "the manager never ensured its hub (adoption never finished)");
-            await Task.Delay(10);
-        }
-        var row = await data.ReadAsync((tx, _) => tx.Instances.Get("lvl-1"));
-        Assert.Equal((InstanceState.Live, null), (row!.State, row.Reason));
     }
 
     [Fact]

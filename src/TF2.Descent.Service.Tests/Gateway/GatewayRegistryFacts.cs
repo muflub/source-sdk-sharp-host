@@ -126,6 +126,41 @@ public class GatewayRegistryFacts
     }
 
     [Fact]
+    public async Task Closing_a_taken_over_session_keeps_the_lease_its_successor_holds()
+    {
+        // Measured on k3s: a gateway rollout carried the player's old session; the client came
+        // back from a new port (a new session, taken over), and the old one's "never resumed"
+        // close a minute later released the lease the new session was playing on.
+        var (h, r, _) = await Registry();
+        await using var _ = h;
+        var ch = await h.Character(account: "765");
+        await h.Lease(ch, h.Hub);
+        await r.SessionOpened(Opened("s1", "1.2.3.4:27005", HubBackend, "127.1.0.1:29005"), default);
+        await r.PlayerJoined(h.Hub, "127.1.0.1:29005", "765", default);
+        h.D.Clock.Advance(GatewayRegistry.SilentAfter + TimeSpan.FromSeconds(1));
+        await r.SessionOpened(Opened("s2", "1.2.3.4:5716", HubBackend, "127.1.0.2:29005"), default);
+        Assert.True((await r.PlayerJoined(h.Hub, "127.1.0.2:29005", "765", default)).Allowed);
+        await r.SessionClosed(new G.SessionEvent { RequestId = "c1", SessionId = "s1", Reason = "never resumed" }, default);
+        Assert.NotNull(await h.R(tx => tx.Leases.Get(ch)));
+    }
+
+    [Fact]
+    public async Task Closing_one_of_two_open_sessions_on_the_instance_keeps_the_lease()
+    {
+        var (h, r, _) = await Registry();
+        await using var _ = h;
+        var ch = await h.Character(account: "765");
+        await h.Lease(ch, h.Hub);
+        await r.SessionOpened(Opened("s1", "1.2.3.4:27005", HubBackend, "127.1.0.1:29005"), default);
+        await r.PlayerJoined(h.Hub, "127.1.0.1:29005", "765", default);
+        // A second session for the same player on the same hub, still open (a carried one, before any takeover).
+        await h.W(tx => tx.Sessions.Upsert(new SessionRecord("s0", "1.2.3.4:5716", "765", h.Hub.Id, HubBackend, "127.1.0.9:29005", "open",
+            h.D.Clock.GetUtcNow(), h.D.Clock.GetUtcNow(), h.D.Clock.GetUtcNow())));
+        await r.SessionClosed(new G.SessionEvent { RequestId = "c1", SessionId = "s1", Reason = "expired" }, default);
+        Assert.NotNull(await h.R(tx => tx.Leases.Get(ch)));
+    }
+
+    [Fact]
     public async Task Closing_an_unidentified_session_releases_nothing()
     {
         var (h, r, _) = await Registry();

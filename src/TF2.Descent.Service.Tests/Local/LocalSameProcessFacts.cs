@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SourceSharp.Host.Abstractions;
 using SourceSharp.Host.FakeGame;
 using SourceSharp.Host.FakeGame.Control;
+using SourceSharp.Host.Testing;
 
 namespace TF2.Descent.Service.Tests.Local;
 
@@ -24,7 +25,9 @@ public sealed class LocalSameProcessFacts : IAsyncDisposable
 
     async Task<FakeGameHost> Start()
     {
-        var settings = LocalProfile.Settings(_dir, gameApiPort: TestService.FreePort(), adminPort: TestService.FreePort());
+        var settings = LocalProfile.Settings(_dir);
+        settings["Listen:GameApi"] = TestLoopback.Endpoint(); // this process's own loopback address (TestLoopback)
+        settings["Listen:Admin"] = TestLoopback.Endpoint();
         settings["Instances:HeartbeatInterval"] = "00:00:01";
         settings["Instances:TickInterval"] = "00:00:00.100";
         settings["MapPool:DefaultPerDepth"] = "0";
@@ -40,10 +43,10 @@ public sealed class LocalSameProcessFacts : IAsyncDisposable
         _game = await FakeGameHost.StartAsync(["-hostlocal", file, "+map", "tf2_descent_town", "-port", _port.ToString()], new Dictionary<string, string?>
         {
             ["FAKEGAME_HeartbeatMs"] = "200", ["FAKEGAME_MainStallMs"] = "600", ["FAKEGAME_PlayerIdleMs"] = "60000",
-            ["FAKEGAME_ControlListen"] = $"127.0.0.1:{TestService.FreePort()}",
-            ["RELAY_Mode"] = "Loopback", ["RELAY_Listen"] = $"127.0.0.1:{TestService.FreePort()}",
-            ["RELAY_InfoListen"] = $"127.0.0.1:{TestService.FreePort()}", ["RELAY_Health"] = $"127.0.0.1:{TestService.FreePort()}",
-            ["RELAY_EngineEndpoint"] = $"127.0.0.1:{_port}", ["RELAY_AddressPool"] = "127.201.1.0/24",
+            ["FAKEGAME_ControlListen"] = TestLoopback.Endpoint(),
+            ["RELAY_Mode"] = "Loopback", ["RELAY_Listen"] = TestLoopback.Endpoint(),
+            ["RELAY_InfoListen"] = TestLoopback.Endpoint(), ["RELAY_Health"] = TestLoopback.Endpoint(),
+            ["RELAY_EngineEndpoint"] = $"{TestLoopback.Host}:{_port}", ["RELAY_AddressPool"] = $"127.250.{Environment.ProcessId % 256}.0/24",
         });
         await Until(() => Task.FromResult(_game.Server.MapIsReady), "the hub's map ready");
         var joined = await _game.Control.JoinAsync(new JoinRequest { Steamid = Steam, Name = "Ann" });

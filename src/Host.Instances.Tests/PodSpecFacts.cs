@@ -80,6 +80,7 @@ public class PodSpecFacts
         Assert.Equal(["/opt/sourcesharp/fetch-level.sh", "tf2_descent-7-abc123"], fetch.Command);
         Assert.Equal("http://tf2-descent-service-internal:5000", Env(fetch, "SOURCESHARP_HOST_INTERNAL_MAPS"));
         Assert.Equal(("maps-overlay", "/game/maps-overlay"), (fetch.VolumeMounts.Single().Name, fetch.VolumeMounts.Single().MountPath));
+        Assert.Equal(fetch.VolumeMounts.Single().MountPath, Env(fetch, "OUT_DIR")); // the files land on the volume
     }
 
     [Fact]
