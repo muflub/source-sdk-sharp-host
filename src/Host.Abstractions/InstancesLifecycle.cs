@@ -80,6 +80,9 @@ public abstract record InstanceCommand
     /// <summary><paramref name="LocalConnection"/>: only for a same-process hop in local mode (the target's connection record).</summary>
     public sealed record PrepareHop(string SteamId, string TargetInstanceId, string Map = "", string LocalConnection = "") : InstanceCommand;
     public sealed record Say(string Text) : InstanceCommand;
+    /// <summary>D-H14: the party's next level down (its map, and where a client downloads it).</summary>
+    /// <summary><paramref name="MapSha256"/>: lower-case hex of the unpacked .bsp's SHA-256, "" when unknown.</summary>
+    public sealed record NextLevel(int Depth, string Map, string DownloadUrl, string MapSha256 = "") : InstanceCommand;
     public sealed record Exec(string Command) : InstanceCommand;
     /// <summary>The service ended a lease (expiry, admin, crash): the SDK raises LeaseLost.</summary>
     public sealed record LeaseRevoked(string CharacterId, string Reason) : InstanceCommand;
@@ -119,4 +122,11 @@ public interface IInstanceHooks
 
     /// <summary>Whether a corpse lies on this instance: an empty level then waits CorpseGrace instead of EmptyGrace (Q10).</summary>
     Task<bool> HasCorpses(InstanceRecord instance, CancellationToken ct);
+
+    /// <summary>
+    /// Whether something else keeps this empty level open (D-H14: a prewarm whose party's level
+    /// still runs). Held, it is never judged empty; its empty grace starts when the hold ends.
+    /// Reads only: called under the manager's lock.
+    /// </summary>
+    Task<bool> IsHeldOpen(InstanceRecord instance, CancellationToken ct);
 }

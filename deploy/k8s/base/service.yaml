@@ -11,6 +11,9 @@ spec:
   template:
     metadata:
       labels: { app: tf2-descent-service }
+      # `make deploy MOD_IMAGE=…` fills this in: a new mod image changes the template, so the
+      # service rolls; the values themselves arrive by the ConfigMap below, in the same apply.
+      annotations: { sourcesharp/mod-image: "__MOD_IMAGE__" }
     spec:
       serviceAccountName: tf2-descent-service
       terminationGracePeriodSeconds: 30
@@ -30,6 +33,10 @@ spec:
               value: /data/host.db
             - name: SOURCESHARP_SERVICE_MapPool__MapsPath
               value: /maps
+          # Instances.ModImage and Mod.Name, rendered by `make deploy` into the same apply as this
+          # StatefulSet, so the first pod never starts (and creates a hub) without them.
+          envFrom:
+            - configMapRef: { name: tf2-descent-mod-image, optional: true }
           ports:
             - { name: internal, containerPort: 5000 }
             - { name: game-api, containerPort: 5001 }

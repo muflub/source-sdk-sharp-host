@@ -18,7 +18,7 @@ public class TravelFacts
         int _n;
         public async Task<LevelRequestResult> RequestLevel(int depth, string? partyId, string? levelHash, long? packVersion, CancellationToken ct = default)
         {
-            if (Requests.Count >= Max) return new LevelRequestResult.AtCapacity(Requests.Count, Max);
+            if (Requests.Count - Drained.Count >= Max) return new LevelRequestResult.AtCapacity(Requests.Count - Drained.Count, Max);
             Requests.Add(levelHash ?? "(none)");
             var id = $"lvl-new-{++_n}";
             var row = await h.AddInstance(id, InstanceKind.Level, depth);
@@ -36,7 +36,13 @@ public class TravelFacts
         public Task OnStreamOpened(string instanceId, CancellationToken ct = default) => Task.CompletedTask;
         public Task OnHeartbeat(string instanceId, int players, CancellationToken ct = default) => Task.CompletedTask;
         public Task OnStreamClosed(string instanceId, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<InstanceRecord> Drain(string instanceId, string reason, string actor, CancellationToken ct = default) => throw new NotImplementedException();
+        /// <summary>A drained level frees its slot at once here (the manager frees it at the reap).</summary>
+        public List<string> Drained { get; } = [];
+        public async Task<InstanceRecord> Drain(string instanceId, string reason, string actor, CancellationToken ct = default)
+        {
+            Drained.Add($"{instanceId} {reason}");
+            return await h.W(tx => tx.Instances.Update(instanceId, r => r with { State = InstanceState.Draining, Reason = reason }));
+        }
         public List<string> Left { get; } = [];
         public Task Leave(string instanceId, string reason, CancellationToken ct = default) { Left.Add($"{instanceId} {reason}"); return Task.CompletedTask; }
         public Task Kick(string instanceId, string steamId, string reason, string actor, CancellationToken ct = default) => Task.CompletedTask;
@@ -78,7 +84,7 @@ public class TravelFacts
             Travel.Go(H.Hub, who ?? Leader, H.Token(who ?? Leader), null, depth, TravelKind.Descend, default);
     }
 
-    static async Task<World> Setup(FakeConnections? sameProcess = null)
+    static async Task<World> Setup(FakeConnections? sameProcess = null, SourceSharp.Host.MapPool.LevelStorage? levels = null)
     {
         var h = await LedgerHarness.Create();
         var life = new FakeLifecycle(h);
@@ -86,7 +92,7 @@ public class TravelFacts
         var commands = new RecordingCommands();
         var gateway = new RecordingGatewayControl();
         var travel = new TravelCoordinator(h.D.Data, life, pool, commands, gateway, h.Options, NullLogger<TravelCoordinator>.Instance,
-            sameProcess is null ? null : new SameProcessTravel(sameProcess));
+            sameProcess is null ? null : new SameProcessTravel(sameProcess), levels);
         var leader = await h.Character("Ann", account: "765");
         var mate = await h.Character("Bo", account: "766");
         await h.Lease(leader, h.Hub);
@@ -341,5 +347,192 @@ public class TravelFacts
         await ReplacedHub(w);
         var e = await Assert.ThrowsAsync<HostRefusal>(() => w.Travel.Go(w.H.Hub, w.Leader, w.H.Token(w.Leader), null, 0, TravelKind.TownPortal, default));
         Assert.Equal("no_hub", e.Reason);
+    }
+
+    // ------------------------------------------------------------------ D-H14 prewarm
+
+    /// <summary>The party descends to depth 1 and its level goes live: the arrival D-H14 prewarms from.</summary>
+    static async Task<InstanceRecord> ArriveAtDepth1(World w)
+    {
+        var r = await w.Descend(1);
+        var level = await w.H.W(tx => tx.Instances.Update(r.InstanceId, i => i with { State = InstanceState.Live }));
+        await w.Travel.OnInstanceLive(level, default);
+        await w.Travel.RetryWaiting(default); // the tick that runs the queued prewarm
+        return level;
+    }
+
+    static IEnumerable<string> NextLevels(World w) => w.Commands.Sent.Where(c => c.Contains("NextLevel"));
+
+    [Fact]
+    public async Task Arriving_on_a_level_prewarms_the_next_depth_and_tells_its_map()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        w.H.Options.Instances.FastDlUrl = "http://maps.example:5004/";
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        var level = await ArriveAtDepth1(w);
+        Assert.Equal(["(none)", "(none)"], w.Life.Requests); // depth 1, then the prewarm of depth 2
+        Assert.Equal([$"{level.Id} NextLevel {{ Depth = 2, Map = tf2_descent-2-L2, DownloadUrl = http://maps.example:5004/, MapSha256 =  }}"], NextLevels(w));
+        Assert.Equal(("L2", "L2"), ((await w.H.R(tx => tx.LevelClaims.Get(w.Leader, 2)))!.LevelHash, (await w.H.R(tx => tx.LevelClaims.Get(w.Mate, 2)))!.LevelHash));
+    }
+
+    [Fact]
+    public async Task The_prewarm_is_linked_to_the_level_its_party_arrived_on()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        var level = await ArriveAtDepth1(w);
+        var prewarmed = (await w.H.R(tx => tx.Instances.NonTerminal())).Single(i => i.Depth == 2);
+        var link = Assert.Single(await w.H.R(tx => tx.Audit.List(new AuditQuery(Action: TravelCoordinator.PrewarmedAction, Target: prewarmed.Id))));
+        Assert.Contains($"\"parent\":\"{level.Id}\"", link.AfterJson);
+    }
+
+    [Fact]
+    public async Task NextLevel_carries_the_sha256_of_the_stored_bsp()
+    {
+        var storage = new SourceSharp.Host.MapPool.LevelStorage(new MapPoolOptions { MapsPath = Path.Combine(Path.GetTempPath(), $"sourcesharp-bsp-{Guid.NewGuid():N}") });
+        Directory.CreateDirectory(storage.LevelsDirectory);
+        var bsp = "VBSP fake level body"u8.ToArray();
+        await File.WriteAllBytesAsync(storage.LevelFile("tf2_descent-2-L2", ".bsp"), bsp);
+        var w = await Setup(levels: storage);
+        await using var _ = w.H;
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        await ArriveAtDepth1(w);
+        var sha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bsp));
+        Assert.Contains(NextLevels(w), c => c.EndsWith($"MapSha256 = {sha} }}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task The_prewarm_hops_nobody()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        var level = await ArriveAtDepth1(w);
+        var prewarmed = (await w.H.R(tx => tx.Instances.NonTerminal())).Single(i => i.Depth == 2);
+        await w.Travel.OnInstanceLive(await w.H.W(tx => tx.Instances.Update(prewarmed.Id, i => i with { State = InstanceState.Live })), default);
+        Assert.DoesNotContain(w.Commands.Sent, c => c.Contains("PrepareHop") && c.Contains(prewarmed.Id));
+    }
+
+    [Fact]
+    public async Task A_later_descent_lands_on_the_prewarmed_level()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        await ArriveAtDepth1(w);
+        var prewarmed = (await w.H.R(tx => tx.Instances.NonTerminal())).Single(i => i.Depth == 2);
+        var r = await w.Descend(2);
+        Assert.Equal(prewarmed.Id, r.InstanceId);
+        Assert.Equal(2, w.Life.Requests.Count); // no third instance
+    }
+
+    [Fact]
+    public async Task The_last_depth_prewarms_nothing()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        w.H.Options.MapPool.Depths = 1;
+        await w.Pool.AddReady("L1", 1);
+        var level = await ArriveAtDepth1(w);
+        Assert.Single(w.Life.Requests);
+        Assert.Empty(NextLevels(w));
+    }
+
+    [Fact]
+    public async Task A_prewarm_is_not_started_at_the_cap()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        w.H.Options.Instances.MaxLevelPods = 1; // depth 1 fills it
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        await ArriveAtDepth1(w);
+        Assert.Single(w.Life.Requests);
+        Assert.Empty(NextLevels(w));
+    }
+
+    /// <summary>Ann's party is on depth 1 with depth 2 prewarmed; the cap (2) is full. Cy, solo on the hub, descends.</summary>
+    static async Task<(World W, InstanceRecord Prewarm, string Cy)> FullWithAPrewarm()
+    {
+        var w = await Setup();
+        w.Life.Max = 2;
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        await w.Pool.AddReady("L1-b", 1);
+        await ArriveAtDepth1(w);
+        var prewarm = (await w.H.R(tx => tx.Instances.NonTerminal())).Single(i => i.Depth == 2);
+        var cy = await w.H.Character("Cy", account: "767");
+        await w.H.Lease(cy, w.H.Hub);
+        return (w, prewarm, cy);
+    }
+
+    [Fact]
+    public async Task At_the_cap_a_descent_drains_an_unentered_prewarm_and_waits()
+    {
+        var (w, prewarm, cy) = await FullWithAPrewarm();
+        await using var _ = w.H;
+        var r = await w.Travel.Go(w.H.Hub, cy, w.H.Token(cy), null, 1, TravelKind.Descend, default);
+        Assert.Equal(P.TravelState.Waiting, r.State);
+        Assert.Contains("yields", r.Reason);
+        Assert.Equal([$"{prewarm.Id} prewarm_yield"], w.Life.Drained);
+    }
+
+    [Fact]
+    public async Task The_waiting_descent_gets_its_level_once_the_slot_is_free()
+    {
+        var (w, prewarm, cy) = await FullWithAPrewarm();
+        await using var _ = w.H;
+        await w.Travel.Go(w.H.Hub, cy, w.H.Token(cy), null, 1, TravelKind.Descend, default);
+        await w.Travel.RetryWaiting(default); // the tick: the yielded slot is free
+        Assert.Equal(3, w.Life.Requests.Count); // depth 1, the prewarm, then Cy's level
+        Assert.Equal("L1-b", (await w.H.R(tx => tx.LevelClaims.Get(cy, 1)))!.LevelHash);
+    }
+
+    [Fact]
+    public async Task A_prewarm_someone_entered_does_not_yield()
+    {
+        var (w, prewarm, cy) = await FullWithAPrewarm();
+        await using var _ = w.H;
+        await w.H.W(async tx => { await tx.Audit.Write(SourceSharp.Host.Instances.InstanceManager.OccupiedAction, prewarm.Id, null, new { players = 1 }); return true; });
+        var r = await w.Travel.Go(w.H.Hub, cy, w.H.Token(cy), null, 1, TravelKind.Descend, default);
+        Assert.StartsWith("instance_cap: 2/2", r.Reason);
+        Assert.Empty(w.Life.Drained);
+    }
+
+    [Fact]
+    public async Task With_an_empty_pool_the_prewarm_waits_then_tells_the_map()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.Pool.AddReady("L1", 1);
+        var level = await ArriveAtDepth1(w);
+        Assert.Equal(2, w.Life.Requests.Count); // the depth-2 instance exists, waiting for a level
+        Assert.Empty(NextLevels(w));
+        await w.Pool.AddReady("L2", 2);
+        await w.Travel.RetryWaiting(default);
+        Assert.Equal([$"{level.Id} NextLevel {{ Depth = 2, Map = tf2_descent-2-L2, DownloadUrl = , MapSha256 =  }}"], NextLevels(w));
+        var prewarmed = (await w.H.R(tx => tx.Instances.NonTerminal())).Single(i => i.Depth == 2);
+        Assert.DoesNotContain(w.Commands.Sent, c => c.Contains("PrepareHop") && c.Contains(prewarmed.Id));
+    }
+
+    [Fact]
+    public async Task Same_process_travel_prewarms_nothing()
+    {
+        var w = await Setup(new FakeConnections { Pods = [] });
+        await using var _ = w.H;
+        await w.Pool.AddReady("L1", 1);
+        await w.Pool.AddReady("L2", 2);
+        var r = await w.Descend(1);
+        var level = await w.H.W(tx => tx.Instances.Update(r.InstanceId, i => i with { State = InstanceState.Live }));
+        await w.Travel.OnInstanceLive(level, default);
+        await w.Travel.RetryWaiting(default);
+        Assert.Single(w.Life.Requests);
     }
 }

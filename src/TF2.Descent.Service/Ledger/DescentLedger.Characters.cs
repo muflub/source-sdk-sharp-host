@@ -40,13 +40,13 @@ public sealed partial class DescentLedger
         };
     }
 
-    /// <summary>Release on hop or logout, after the final checkpoint; the reserve on this instance goes with the lease (§5.2a).</summary>
+    /// <summary>Release on hop or logout, after the final checkpoint; the reserve stays on the level until it ends (§5.2a).</summary>
     public static async Task ReleaseCharacter(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token)
     {
         await Leased(tx, caller, characterId, token);
-        var swept = await SweepReserve(tx, characterId, caller.Id, "reserve_released");
+        // §5.2a: the reserve stays with the level until the level ends (SweepInstance).
         await tx.Leases.Release(characterId, token);
-        await tx.Audit.Write("lease.release", characterId, null, new { instance = caller.Id, reserveSwept = swept });
+        await tx.Audit.Write("lease.release", characterId, null, new { instance = caller.Id });
     }
 
     /// <summary>

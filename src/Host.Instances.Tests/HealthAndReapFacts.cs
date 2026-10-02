@@ -247,6 +247,37 @@ public class HealthAndReapFacts
         Assert.Equal((InstanceState.Draining, "empty_with_corpse"), (after.State, after.Reason));
     }
 
+    // ---- D-H14 amended: an empty level held open (a prewarm whose party's level still runs)
+
+    [Fact]
+    public async Task An_empty_level_held_open_never_drains()
+    {
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        h.Hooks.HeldOpen.Add(row.Id);
+        await Beat(h, row.Id, 0, h.Options.Instances.EmptyGrace * 3);
+        await h.Tick();
+        Assert.Equal(InstanceState.Live, (await h.Row(row.Id)).State);
+    }
+
+    [Fact]
+    public async Task Its_empty_grace_starts_when_the_hold_ends()
+    {
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        h.Hooks.HeldOpen.Add(row.Id);
+        await Beat(h, row.Id, 0, h.Options.Instances.EmptyGrace * 3);
+        await h.Tick();
+        h.Hooks.HeldOpen.Remove(row.Id); // the level that held it ended
+        await h.Tick();
+        await Beat(h, row.Id, 0, h.Options.Instances.EmptyGrace - TimeSpan.FromSeconds(5));
+        await h.Tick();
+        Assert.Equal(InstanceState.Live, (await h.Row(row.Id)).State); // not drained at once for the time it was held
+        await Beat(h, row.Id, 0, TimeSpan.FromSeconds(10));
+        await h.Tick();
+        Assert.Equal((InstanceState.Draining, "empty"), ((await h.Row(row.Id)).State, (await h.Row(row.Id)).Reason));
+    }
+
     [Fact]
     public async Task Occupied_level_never_drains()
     {

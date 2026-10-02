@@ -83,11 +83,11 @@ public sealed class GatewayRegistry(
             if (s.State == "closed"
                 || (await tx.Sessions.ForSteamId(steamId)).Any(o => o.Id != s.Id && o.State == "open" && o.InstanceId == instanceId))
                 return true;
-            // §4.3: an identified session's close releases the lease at once; the reserve goes with it.
+            // §4.3: an identified session's close releases the lease at once; the reserve stays with
+            // the level until the level ends (§5.2a).
             foreach (var ch in await tx.Characters.List(steamId))
                 if (await tx.Leases.Get(ch.Id) is { } lease && lease.InstanceId == instanceId)
                 {
-                    await DescentLedger.SweepReserve(tx, ch.Id, instanceId, "reserve_released");
                     await tx.Leases.Release(ch.Id, null);
                     await tx.Audit.Write("lease.release", ch.Id, null, new { instance = instanceId, reason = "session_closed" });
                 }

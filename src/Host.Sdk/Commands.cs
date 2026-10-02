@@ -65,6 +65,20 @@ public sealed class HopRequest
 }
 
 /// <summary>
+/// D-H14: the party's next level down, claimed and booting while they play. The game's client
+/// side fetches <c>{DownloadUrl}maps/{Map}.bsp.bz2</c> in the background (stock Source clients
+/// only download at connect), so the map is local when the hop comes. <see cref="DownloadUrl"/>
+/// is empty when the service has no public fastdl; the map name carries the level's hash.
+/// <see cref="MapSha256"/> is the SHA-256 of the unpacked .bsp (32 bytes), to verify a download
+/// before installing it and a cached map before skipping it; null when the host does not know it.
+/// </summary>
+public sealed record NextLevelInfo(string CommandId, int Depth, string Map, string DownloadUrl, byte[]? MapSha256 = null)
+{
+    /// <summary>The bz2's full URL, or null when there is nowhere to fetch it from.</summary>
+    public string? MapUrl => DownloadUrl.Length == 0 ? null : $"{DownloadUrl.TrimEnd('/')}/maps/{Map}.bsp.bz2";
+}
+
+/// <summary>
 /// A same-process hop's target (D-H13 local mode): its map, and its level's .bsp/.nav3d/.map2d as
 /// absolute paths (empty for the hub, whose map ships with the mod).
 /// </summary>
@@ -80,6 +94,8 @@ public interface IHostCommands
     event Action<SayCommand>? Say;
     event Action<ExecRequest>? Exec;
     event Action<HopRequest>? PrepareHop;
+    /// <summary>D-H14: the party's next level down is booting; its map can be fetched in the background.</summary>
+    event Action<NextLevelInfo>? NextLevel;
 }
 
 internal sealed class HostCommands(SdkCore core) : IHostCommands
@@ -91,6 +107,7 @@ internal sealed class HostCommands(SdkCore core) : IHostCommands
     public event Action<SayCommand>? Say;
     public event Action<ExecRequest>? Exec;
     public event Action<HopRequest>? PrepareHop;
+    public event Action<NextLevelInfo>? NextLevel;
 
     /// <summary>Called on the stream's reader thread: nothing is raised here, only queued.</summary>
     public void OnCommand(P.ServerCommand c)
@@ -110,6 +127,13 @@ internal sealed class HostCommands(SdkCore core) : IHostCommands
                 var local = SameProcessTarget(h);
                 if (local is not null) core.PendingLocalHop = local;
                 core.Main.Post(() => PrepareHop?.Invoke(new HopRequest(core, id, h.Steamid, h.HopId, h.TargetInstance, h.Map, local)));
+                break;
+            }
+            case P.ServerCommand.KindOneofCase.NextLevel:
+            {
+                var n = c.NextLevel;
+                var sha = n.MapSha256.Length == 32 ? n.MapSha256.ToByteArray() : null;
+                core.Main.Post(() => NextLevel?.Invoke(new NextLevelInfo(id, n.Depth, n.Map, n.DownloadUrl, sha)));
                 break;
             }
             case P.ServerCommand.KindOneofCase.LeaseRevoked:

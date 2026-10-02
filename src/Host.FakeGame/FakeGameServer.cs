@@ -64,6 +64,8 @@ public sealed class FakeGameServer : IAsyncDisposable
     public ToyBackend Backend => _backend;
     public BootInfo? Boot { get; private set; }
     public bool MapIsReady { get; private set; }
+    /// <summary>The last D-H14 NextLevel the service sent, if any.</summary>
+    public NextLevelInfo? NextLevel { get; private set; }
     public string? ModuleSha256 { get; private set; }
     public bool Hung => _hung;
     public bool Draining => _draining;
@@ -356,6 +358,8 @@ public sealed class FakeGameServer : IAsyncDisposable
         };
         c.Exec += e => { Note($"exec {e.Command}"); _ = e.Reply($"fake {_config.InstanceId}: {e.Command}"); };
         c.PrepareHop += h => _ = PrepareHop(h);
+        // D-H14: the real game's client fetches the next map in the background; the fake notes it.
+        c.NextLevel += n => { NextLevel = n; Note($"next_level {n.Depth} {n.Map} {n.MapUrl}"); };
         c.Shutdown += s => { Note($"shutdown {s.Reason}"); _ = Task.Run(() => StopAsync(0)); };
     }
 

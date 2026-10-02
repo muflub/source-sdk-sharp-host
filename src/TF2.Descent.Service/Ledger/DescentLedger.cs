@@ -90,20 +90,24 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
     /// level and the depth's item level; owned Reserve; returns only the new items.
     /// </summary>
     public async Task<IReadOnlyList<ItemRecord>> TakeReserve(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
-        IReadOnlyList<(int Tier, int Count)> wanted, string requestId)
+        IReadOnlyList<(int Tier, int Count)> wanted, string requestId, bool includeHeld = false)
     {
         var (ch, _) = await Leased(tx, caller, characterId, token);
         var r = RulesFor(caller);
-        var held = (await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Reserve, OwnerId: characterId, InstanceId: caller.Id, Take: 10_000)))
-            .GroupBy(i => i.Tier).ToDictionary(g => g.Key, g => g.Count());
+        var heldItems = await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Reserve, OwnerId: characterId, InstanceId: caller.Id, Take: 10_000));
+        var held = heldItems.GroupBy(i => i.Tier).ToDictionary(g => g.Key, g => g.Count());
         var row = r.LevelTable(caller.Depth);
-        var minted = new List<ItemRecord>();
+        // §5.2a: a reserve outlives the lease; a returning character's first take gets its pre-rolls back.
+        var wantedTiers = wanted.Select(w => w.Tier).ToHashSet();
+        var minted = includeHeld ? heldItems.Where(i => wantedTiers.Contains(i.Tier)).ToList() : new List<ItemRecord>();
         foreach (var (tier, count) in wanted)
         {
             if (tier < 0 || tier >= r.Tiers.Count) throw new HostRefusal(RefusalCode.InvalidArgument, "bad_tier", $"tier {tier}");
             var size = O.Reserve.Sizes.TryGetValue(r.Tiers[tier], out var n) ? n : 0;
             var room = Math.Max(0, size - held.GetValueOrDefault(tier));
-            for (var k = 0; k < Math.Min(count, room); k++)
+            // With includeHeld the held items returned count toward what was asked for.
+            var ask = includeHeld ? count - held.GetValueOrDefault(tier) : count;
+            for (var k = 0; k < Math.Min(ask, room); k++)
             {
                 var ctx = new ItemRollContext(ch.ClassName, ch.Level, caller.Depth, row.ItemLevel, tier, row.LootTable, "reserve");
                 var rolled = r.RollItem(ctx, NewSeed());
@@ -206,15 +210,6 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         if (minted.Count > 0)
             await tx.Items.Move(new ItemMove(minted[0].Id, OwnerKind.World, OwnerKind.World, caller.Id, kind, InstanceId: caller.Id, RequestId: requestId));
         return minted.Count > 0 ? [await tx.Items.Get(minted[0].Id) ?? minted[0], .. minted.Skip(1)] : minted;
-    }
-
-    /// <summary>§5.2a scope: a reserve belongs to (character, instance) and is swept when that lease ends.</summary>
-    public static async Task<int> SweepReserve(IWriteTx tx, string characterId, string instanceId, string reason)
-    {
-        var items = await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Reserve, OwnerId: characterId, InstanceId: instanceId, Take: 10_000));
-        foreach (var i in items)
-            await tx.Items.Terminate(i.Id, OwnerKind.Reserve, ItemState.Swept, reason, null);
-        return items.Count;
     }
 
     /// <summary>§5.2a level-up: tiers whose rolled level is StaleLevels or more below the new level are swept.</summary>

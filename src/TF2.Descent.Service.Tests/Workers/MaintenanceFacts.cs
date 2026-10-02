@@ -24,7 +24,7 @@ public class MaintenanceFacts
     }
 
     [Fact]
-    public async Task An_expired_lease_is_released_with_its_reserve_and_the_pod_is_told()
+    public async Task An_expired_lease_is_released_its_reserve_kept_on_the_level_and_the_pod_is_told()
     {
         await using var h = await LedgerHarness.Create();
         var (m, c, _) = Worker(h);
@@ -36,7 +36,7 @@ public class MaintenanceFacts
         h.D.Clock.Advance(TimeSpan.FromSeconds(31));
         Assert.Equal(1, await m.ExpireLeases(default));
         Assert.Null(await h.R(tx => tx.Leases.Get(ch)));
-        Assert.Equal(0, await h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Reserve))));
+        Assert.Equal(2, await h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Reserve, InstanceId: h.Level.Id)))); // §5.2a: until the level ends
         Assert.Contains($"{h.Level.Id} LeaseRevoked {{ CharacterId = {ch}, Reason = lease_expired }}", c.Sent);
         Assert.Single(await h.R(tx => tx.Audit.List(new AuditQuery(Action: "lease.expired"))));
     }

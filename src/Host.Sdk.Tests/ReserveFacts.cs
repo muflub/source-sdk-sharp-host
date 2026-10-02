@@ -199,7 +199,7 @@ public class ReserveFacts
     }
 
     [Fact]
-    public async Task Releasing_the_lease_closes_the_reserve_and_the_service_sweeps_it()
+    public async Task Releasing_the_lease_closes_the_reserve_and_the_service_keeps_it_on_the_level()
     {
         await using var h = await SdkHarness.Start();
         var l = await LevelWithLease(h);
@@ -207,7 +207,23 @@ public class ReserveFacts
         Assert.True((await l.Sdk.Pumped(l.Lease.Release())).Ok);
         Assert.False(r.IsOpen);
         Assert.Null(r.NextForTier(0));
-        Assert.Equal(0, await LiveReserve(h, l.Character.Id));
+        Assert.Equal(32, await LiveReserve(h, l.Character.Id)); // §5.2a: until the level ends
+    }
+
+    [Fact]
+    public async Task A_character_back_on_the_same_level_gets_the_same_pre_rolls()
+    {
+        await using var h = await SdkHarness.Start();
+        var l = await LevelWithLease(h);
+        var first = (Reserve)await Filled(l);
+        var before = Enumerable.Range(0, 5).SelectMany(first.Peek).Order().ToList();
+        Assert.True((await l.Sdk.Pumped(l.Lease.Release())).Ok);
+
+        var again = (await l.Sdk.Pumped(l.Sdk.Characters.Lease(l.Character.Id))).Value;
+        var r = (Reserve)l.Sdk.Items.OpenReserve(again);
+        await l.Sdk.PumpUntil(() => Enumerable.Range(0, 5).All(t => r.Count(t) == r.Size(t)), what: "the reserve filled again");
+        Assert.Equal(before, Enumerable.Range(0, 5).SelectMany(r.Peek).Order().ToList());
+        Assert.Equal(32, await LiveReserve(h, l.Character.Id)); // nothing minted beyond the size
     }
 
     [Fact]

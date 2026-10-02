@@ -111,17 +111,26 @@ cluster-down:
 	$(KUBECTL) delete namespace $(NAMESPACE) --wait=true
 OVERLAY       := deploy/k8s/$(if $(filter fake,$(TIER)),local-fake,local)
 CONTENT_PATH  ?= $(HOME)/.steam/steam/steamapps/common/Team Fortress 2
+# One apply: the manifests and, with MOD_IMAGE, the ConfigMap the service reads it from. A second
+# step (`set env`, as before) rolled the service twice, and the first pod could create a hub with
+# no mod image, which then boot-timed-out (measured on k3s, 2026-10-02 12:45).
 deploy:
-	$(KUBECTL) kustomize $(OVERLAY) | sed -e "s#:latest#:$(TAG)#g" -e "s#__CONTENT_PATH__#$(CONTENT_PATH)#" | $(KUBECTL) apply -f -
-	@if [ -n "$(MOD_IMAGE)" ]; then \
-	  ref="$(MOD_IMAGE)"; reg=$${ref%%/*}; rest=$${ref#*/}; name=$${rest%%:*}; tag=$${rest##*:}; \
-	  $(KUBECTL) -n $(NAMESPACE) set env statefulset/tf2-descent-service \
-	    SOURCESHARP_SERVICE_Instances__ModImage__Registry="$$reg" SOURCESHARP_SERVICE_Instances__ModImage__Name="$$name" SOURCESHARP_SERVICE_Instances__ModImage__Tag="$$tag" \
-	    SOURCESHARP_SERVICE_Mod__Name="$(MOD_NAME)"; fi
+	@for img in tf2-descent-service sourcesharp-gateway sourcesharp-engine; do \
+	  curl -sf -o /dev/null -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+	    "http://$(REGISTRY)/v2/$$img/manifests/$(TAG)" \
+	  || { echo "deploy: $(REGISTRY)/$$img:$(TAG) is not in the registry (run make images, or pass TAG=<a built tag>)" >&2; exit 1; }; done
+	@set -e; { $(KUBECTL) kustomize $(OVERLAY) | sed -e "s#:latest#:$(TAG)#g" -e "s#__CONTENT_PATH__#$(CONTENT_PATH)#" -e "s#__MOD_IMAGE__#$(MOD_IMAGE)#"; \
+	  if [ -n "$(MOD_IMAGE)" ]; then \
+	    ref="$(MOD_IMAGE)"; reg=$${ref%%/*}; rest=$${ref#*/}; name=$${rest%%:*}; tag=$${rest##*:}; \
+	    echo "---"; $(KUBECTL) -n $(NAMESPACE) create configmap tf2-descent-mod-image --dry-run=client -o yaml \
+	      --from-literal=SOURCESHARP_SERVICE_Instances__ModImage__Registry="$$reg" --from-literal=SOURCESHARP_SERVICE_Instances__ModImage__Name="$$name" \
+	      --from-literal=SOURCESHARP_SERVICE_Instances__ModImage__Tag="$$tag" --from-literal=SOURCESHARP_SERVICE_Mod__Name="$(MOD_NAME)"; fi; } \
+	  | $(KUBECTL) apply -f -
 	$(KUBECTL) -n $(NAMESPACE) rollout status statefulset/tf2-descent-service --timeout=180s
 	$(KUBECTL) -n $(NAMESPACE) rollout status deploy/tf2-descent-gateway --timeout=180s
 undeploy:
 	$(KUBECTL) kustomize $(OVERLAY) | sed -e "s#__CONTENT_PATH__#$(CONTENT_PATH)#" | $(KUBECTL) delete --ignore-not-found --wait=true -f -
+	$(KUBECTL) -n $(NAMESPACE) delete configmap tf2-descent-mod-image --ignore-not-found
 	$(KUBECTL) -n $(NAMESPACE) wait --for=delete pod -l app=sourcesharp-game --timeout=90s || true
 admin:
 	$(KUBECTL) -n $(NAMESPACE) port-forward pod/tf2-descent-service-0 5000:5000

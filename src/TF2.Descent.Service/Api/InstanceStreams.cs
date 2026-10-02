@@ -71,6 +71,11 @@ public sealed class InstanceStreams : IInstanceCommands
             },
         },
         InstanceCommand.Say s => new P.ServerCommand { Say = new P.Say { Text = s.Text } },
+        InstanceCommand.NextLevel n => new P.ServerCommand { NextLevel = new P.NextLevel
+        {
+            Depth = n.Depth, Map = n.Map, DownloadUrl = n.DownloadUrl,
+            MapSha256 = n.MapSha256.Length == 0 ? Google.Protobuf.ByteString.Empty : Google.Protobuf.ByteString.CopyFrom(Convert.FromHexString(n.MapSha256)),
+        } },
         InstanceCommand.Exec e => new P.ServerCommand { Exec = new P.Exec { Command = e.Command } },
         InstanceCommand.LeaseRevoked r => new P.ServerCommand { LeaseRevoked = new P.LeaseRevoked { CharacterId = r.CharacterId, Reason = r.Reason } },
         _ => throw new ArgumentOutOfRangeException(nameof(command), command.GetType().Name),

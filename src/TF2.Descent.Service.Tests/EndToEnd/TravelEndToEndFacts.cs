@@ -111,6 +111,47 @@ public class TravelEndToEndFacts
     }
 
     [Fact]
+    public async Task Arriving_on_depth_1_boots_depth_2_tells_its_map_and_the_next_descent_lands_on_it()
+    {
+        var (w, a, b, party) = await PartyOnTheHub(new() { ["Instances:FastDlUrl"] = "http://maps.example:5004/" });
+        await using var _ = w;
+        var hub = (await w.Hub())!;
+        var l1 = await Descend(w, hub.Id, a, 1, party, a, b);
+
+        // D-H14: nobody asked for depth 2, yet it boots, and the depth-1 game hears its map.
+        InstanceRecord? warm = null;
+        await w.Until(async () => (warm = (await w.Data.ReadAsync((tx, _) => tx.Instances.NonTerminal())).FirstOrDefault(i => i.Depth == 2)) is { State: InstanceState.Live },
+            "the prewarmed depth-2 level live");
+        await w.Until(() => Task.FromResult(w.Pods.Game(l1.Id)?.Server.NextLevel is not null), "NextLevel on the depth-1 game");
+        var next = w.Pods.Game(l1.Id)!.Server.NextLevel!;
+        Assert.Equal((2, $"tf2_descent-2-{warm!.LevelHash}"), (next.Depth, next.Map));
+        Assert.Equal($"http://maps.example:5004/maps/tf2_descent-2-{warm.LevelHash}.bsp.bz2", next.MapUrl);
+
+        var l2 = await Descend(w, l1.Id, a, 2, party, a, b);
+        Assert.Equal(warm.Id, l2.Id);
+    }
+
+    [Fact]
+    public async Task A_prewarm_outlives_its_empty_grace_while_its_party_plays_and_ends_after_their_level()
+    {
+        var (w, a, b, party) = await PartyOnTheHub(new() { ["Instances:EmptyGrace"] = "00:00:02" });
+        await using var _ = w;
+        var hub = (await w.Hub())!;
+        var l1 = await Descend(w, hub.Id, a, 1, party, a, b);
+        InstanceRecord? warm = null;
+        await w.Until(async () => (warm = (await w.Data.ReadAsync((tx, _) => tx.Instances.NonTerminal())).FirstOrDefault(i => i.Depth == 2)) is { State: InstanceState.Live },
+            "the prewarmed depth-2 level live");
+        await Task.Delay(TimeSpan.FromSeconds(5)); // past its 2 s empty grace, the party still on depth 1
+        Assert.Equal(InstanceState.Live, (await w.Instance(warm!.Id))!.State);
+
+        await Trip(w, l1.Id, c => c.TownPortalAsync(new TravelRequest { Steamid = a.SteamId.ToString() }).ResponseAsync, a, b);
+        await w.Until(async () => (await w.Instance(warm.Id))!.Terminal, "the prewarm reaped after the party's level");
+        var depth1 = await w.Data.ReadAsync((tx, _) => tx.Audit.List(new AuditQuery(Action: "instance.reaped", Target: l1.Id)));
+        var depth2 = await w.Data.ReadAsync((tx, _) => tx.Audit.List(new AuditQuery(Action: "instance.reaped", Target: warm.Id)));
+        Assert.True(Assert.Single(depth1).At <= Assert.Single(depth2).At, "the prewarm ended before the level that held it");
+    }
+
+    [Fact]
     public async Task A_party_returning_to_a_depth_in_the_same_session_gets_the_same_level_even_after_it_was_reaped()
     {
         var (w, a, b, party) = await PartyOnTheHub(new() { ["Instances:EmptyGrace"] = "00:00:01" });

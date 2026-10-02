@@ -242,6 +242,8 @@ internal sealed class HostSession : IHostSession
         {
             RequestId = Rpc.NewRequestId(), SdkVersion = HostSdk.Version, Module = prepared.announce, Map = map, ModImageDigest = modImageDigest ?? "",
         };
+        request.Loaded.AddRange(LoadedModules.Collect(_core.Options.DeclaredModules)
+            .Select(m => new P.LoadedModule { Name = m.Name, Version = m.Version, Kind = m.Kind }));
         var r = await _core.Rpc.Call((m, d, ct) => _core.Instance.BootingAsync(request, m, d, ct)).ConfigureAwait(false);
         if (!r.Ok) return HostResult<BootInfo>.Refused(r.Refusal!);
         var uploaded = false;

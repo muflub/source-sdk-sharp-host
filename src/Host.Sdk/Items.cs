@@ -66,6 +66,7 @@ internal sealed class Reserve : IReserve
     readonly Dictionary<int, Queue<HostItem>> _queues = new();
     readonly Dictionary<int, int> _generation = new();
     readonly HashSet<int> _refilling = [];
+    readonly HashSet<int> _heldTaken = []; // §5.2a: tiers whose held reserve this lease has taken back
     bool _closed;
 
     public Reserve(SdkCore core, CharacterLease lease)
@@ -114,9 +115,12 @@ internal sealed class Reserve : IReserve
         _refilling.Add(tier);
         _core.Metrics.Refill();
         var generation = _generation[tier];
+        // §5.2a: the reserve outlives a lease, so a tier's first take asks for what is already held.
+        var includeHeld = !_heldTaken.Contains(tier);
         var request = new P.TakeReserveRequest
         {
             RequestId = Rpc.NewRequestId(), CharacterId = _lease.CharacterId, Wanted = { new P.TierCount { Tier = tier, Count = wanted } },
+            IncludeHeld = includeHeld,
         };
         _ = _lease.Write(async token =>
         {
@@ -126,6 +130,7 @@ internal sealed class Reserve : IReserve
         {
             _refilling.Remove(tier);
             if (!r.Ok || _closed || _generation[tier] != generation) return;
+            if (includeHeld) _heldTaken.Add(tier);
             foreach (var i in r.Value.Items)
                 if (_queues.TryGetValue(i.Tier, out var q)) q.Enqueue(i.ToSdk());
         });

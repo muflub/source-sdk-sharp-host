@@ -53,6 +53,11 @@ public sealed class HostSdkOptions
     public int ModuleChunkBytes { get; set; } = 64 * 1024;
     /// <summary>Where the rules module comes from; default: the loaded assembly marked [HostRulesModule].</summary>
     public IRulesModuleSource ModuleSource { get; set; } = new LoadedAssemblyModuleSource();
+    /// <summary>
+    /// What the game adds to Booting's report of what it runs (e.g. its SourceSharp mods and their
+    /// versions); the SDK adds every non-framework assembly loaded in the process itself.
+    /// </summary>
+    public Func<IEnumerable<LoadedModuleInfo>>? DeclaredModules { get; set; }
     /// <summary>Starts the in-process local host for <c>-hostlocal inproc</c>.</summary>
     public ILocalHostStarter LocalHostStarter { get; set; } = new ReflectionLocalHostStarter();
     public TimeSpan PeerInfoTimeout { get; set; } = TimeSpan.FromSeconds(1);
@@ -66,7 +71,7 @@ public sealed class HostSdkOptions
 public sealed class HostSdk : IAsyncDisposable
 {
     /// <summary>Announced in Booting; the service refuses an SDK major it does not speak (§6.6).</summary>
-    public const string Version = "2.0.0";
+    public const string Version = "2.4.0";
 
     readonly SdkCore _core;
     readonly HostSession _session;

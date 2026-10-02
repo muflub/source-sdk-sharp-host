@@ -161,6 +161,22 @@ public class GatewayRegistryFacts
     }
 
     [Fact]
+    public async Task Closing_an_identified_session_keeps_the_reserve_on_its_level()
+    {
+        var (h, r, _) = await Registry();
+        await using var _ = h;
+        var level = await h.W(tx => tx.Instances.Update(h.Level.Id, i => i with { PodIp = "10.42.0.77" }));
+        var ch = await h.Character(account: "765");
+        await h.Lease(ch, level);
+        await h.W(tx => h.Ledger.TakeReserve(tx, level, ch, h.Token(ch), [(0, 3)], h.Req()));
+        await r.SessionOpened(Opened("s1", "1.2.3.4:27005", "10.42.0.77:5010", "127.1.0.1:29005"), default);
+        await r.PlayerJoined(level, "127.1.0.1:29005", "765", default);
+        await r.SessionClosed(new G.SessionEvent { RequestId = "c1", SessionId = "s1", Reason = "expired" }, default);
+        Assert.Null(await h.R(tx => tx.Leases.Get(ch))); // the stimulus: the close released the lease
+        Assert.Equal(3, await h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Reserve, OwnerId: ch, InstanceId: level.Id))));
+    }
+
+    [Fact]
     public async Task Closing_an_unidentified_session_releases_nothing()
     {
         var (h, r, _) = await Registry();

@@ -74,7 +74,6 @@ public sealed class InstanceHooks(
         {
             foreach (var lease in await tx.Leases.ForInstance(instance.Id))
             {
-                await DescentLedger.SweepReserve(tx, lease.CharacterId, instance.Id, "reserve_released");
                 await tx.Leases.Release(lease.CharacterId, null);
                 await tx.Audit.Write("lease.release", lease.CharacterId, null, new { instance = instance.Id, reason = why });
             }
@@ -86,6 +85,19 @@ public sealed class InstanceHooks(
             && await data.ReadAsync((tx, _) => tx.LevelClaims.ClaimsOn(hash), ct) == 0)
             await pool.RetireLevelAsync(hash);
     }
+
+    /// <summary>
+    /// D-H14 (amended): a prewarm is held open while the level its party arrived on still runs;
+    /// its empty grace starts when that level ends. The link is the newest instance.prewarmed audit.
+    /// </summary>
+    public Task<bool> IsHeldOpen(InstanceRecord instance, CancellationToken ct) =>
+        instance.Kind != InstanceKind.Level ? Task.FromResult(false) : data.ReadAsync(async (tx, _) =>
+        {
+            var link = (await tx.Audit.List(new AuditQuery(Action: Travel.TravelCoordinator.PrewarmedAction, Target: instance.Id, Take: 1))).FirstOrDefault();
+            if (link?.AfterJson is not { } json) return false;
+            var parent = System.Text.Json.JsonDocument.Parse(json).RootElement.GetProperty("parent").GetString();
+            return parent is not null && await tx.Instances.Get(parent) is { Terminal: false };
+        }, ct);
 
     public Task<bool> HasCorpses(InstanceRecord instance, CancellationToken ct) =>
         data.ReadAsync(async (tx, _) => await tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Corpse, InstanceId: instance.Id)) > 0, ct);

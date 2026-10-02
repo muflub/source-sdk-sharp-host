@@ -144,5 +144,7 @@ sealed class RecordingHooks(List<string> log) : IInstanceHooks
     }
     public Task OnCrashed(InstanceRecord instance, CancellationToken ct) => Record("OnCrashed", instance);
     public Task<bool> HasCorpses(InstanceRecord instance, CancellationToken ct) => Task.FromResult(Corpses.Contains(instance.Id));
+    public HashSet<string> HeldOpen { get; } = [];
+    public Task<bool> IsHeldOpen(InstanceRecord instance, CancellationToken ct) => Task.FromResult(HeldOpen.Contains(instance.Id));
     public IEnumerable<string> For(string id) => Calls.Where(c => c.Row.Id == id).Select(c => c.Hook);
 }

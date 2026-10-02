@@ -5,6 +5,7 @@ using TF2.Descent.Service.Gateway;
 using TF2.Descent.Service.Ledger;
 using SourceSharp.Host.Abstractions;
 using SourceSharp.Host.Instances;
+using SourceSharp.Host.MapPool;
 using P = SourceSharp.Host.Proto;
 
 namespace TF2.Descent.Service.Travel;
@@ -43,10 +44,16 @@ public sealed class TravelCoordinator(
     IGatewayControl gateway,
     ServiceOptions options,
     ILogger<TravelCoordinator> log,
-    SameProcessTravel? sameProcess = null) : IHopListener, ITripPlanner
+    SameProcessTravel? sameProcess = null,
+    LevelStorage? levels = null) : IHopListener, ITripPlanner
 {
     readonly SameProcessTravel _same = sameProcess ?? new SameProcessTravel(null);
     readonly ConcurrentDictionary<string, bool> _sameProcessHops = new(); // hop ids sent as same-process
+    // D-H14: levels whose party just arrived, waiting for the tick to prewarm the next one down
+    // (OnInstanceLive runs under the instance manager's lock, which RequestLevel takes).
+    readonly ConcurrentQueue<(InstanceRecord Current, IReadOnlyList<Member> Members)> _prewarm = new();
+    // Prewarmed instances still waiting for the pool to hand out a level → (depth, members, the level to tell).
+    readonly ConcurrentDictionary<string, (int Depth, IReadOnlyList<Member> Members, string Current)> _prewarmAwaiting = new();
 
     sealed record Member(string CharacterId, string SteamId, string SourceInstance);
     sealed record Trip(string TargetInstance, IReadOnlyList<Member> Members);
@@ -102,7 +109,15 @@ public sealed class TravelCoordinator(
         {
             var requested = await lifecycle.RequestLevel(depth, partyId, plan.Hash, null, ct);
             if (requested is LevelRequestResult.AtCapacity cap)
+            {
+                // D-H14: a prewarm yields its slot to a level needed now; the trip waits for the room.
+                if (await YieldAPrewarm(ct) is { } yielded)
+                {
+                    _awaitingSlot[Guid.NewGuid().ToString("N")] = new SlotWait(depth, partyId, plan.Hash, plan.Members);
+                    return new P.TravelResponse { State = P.TravelState.Waiting, EtaMs = 5_000, Reason = $"instance_cap: prewarm {yielded} yields its slot" };
+                }
                 return new P.TravelResponse { State = P.TravelState.Waiting, EtaMs = 30_000, Reason = $"instance_cap: {cap.Running}/{cap.Max} levels running" };
+            }
             target = ((LevelRequestResult.Accepted)requested).Instance;
             if (plan.Hash is null && !await TryHandOut(target.Id, depth, plan.Members, ct))
             {
@@ -111,11 +126,52 @@ public sealed class TravelCoordinator(
             }
         }
 
-        // 3. Hop when it is live.
-        _awaitingLive[target.Id] = new Trip(target.Id, plan.Members);
+        await HopWhenLive(target, plan.Members, ct);
+        return new P.TravelResponse { State = P.TravelState.Started, InstanceId = target.Id };
+    }
+
+    // 3. Hop when it is live.
+    async Task HopWhenLive(InstanceRecord target, IReadOnlyList<Member> members, CancellationToken ct)
+    {
+        _awaitingLive[target.Id] = new Trip(target.Id, members);
         if (target.State == InstanceState.Live) await OnInstanceLive(target, ct);
         else if (_same.On) await OnInstanceBooting(target, ct);
-        return new P.TravelResponse { State = P.TravelState.Started, InstanceId = target.Id };
+    }
+
+    sealed record SlotWait(int Depth, string? PartyId, string? Hash, IReadOnlyList<Member> Members);
+    readonly ConcurrentDictionary<string, SlotWait> _awaitingSlot = new(); // trips waiting for a yielded prewarm's slot
+
+    /// <summary>
+    /// D-H14 (amended): at the cap, the oldest prewarm nobody has entered is drained to make room
+    /// (it is reaped once empty and draining, and its slot frees). Null when there is none.
+    /// </summary>
+    async Task<string?> YieldAPrewarm(CancellationToken ct)
+    {
+        var prewarm = await data.ReadAsync(async (tx, _) =>
+        {
+            foreach (var i in (await tx.Instances.NonTerminal()).Where(i => i.Kind == InstanceKind.Level && i.State != InstanceState.Draining && i.Players == 0).OrderBy(i => i.Created))
+                if (await tx.Audit.Count(new AuditQuery(Action: PrewarmedAction, Target: i.Id)) > 0
+                    && await tx.Audit.Count(new AuditQuery(Action: InstanceManager.OccupiedAction, Target: i.Id)) == 0)
+                    return i;
+            return null;
+        }, ct);
+        if (prewarm is null) return null;
+        try { await lifecycle.Drain(prewarm.Id, "prewarm_yield", "travel", ct); }
+        catch (HostRefusal e) { log.LogInformation("prewarm {Id} could not yield: {Reason}", prewarm.Id, e.Reason); return null; }
+        return prewarm.Id;
+    }
+
+    /// <summary>The trips a yielded prewarm made room for: request their level again, then go on as a descent does.</summary>
+    async Task RetryAwaitingSlots(CancellationToken ct)
+    {
+        foreach (var (key, w) in _awaitingSlot.ToArray())
+        {
+            if (await lifecycle.RequestLevel(w.Depth, w.PartyId, w.Hash, null, ct) is not LevelRequestResult.Accepted accepted) continue;
+            _awaitingSlot.TryRemove(key, out _);
+            var target = accepted.Instance;
+            if (w.Hash is null && !await TryHandOut(target.Id, w.Depth, w.Members, ct)) { _awaitingLevel[target.Id] = (w.Depth, w.Members); continue; }
+            await HopWhenLive(target, w.Members, ct);
+        }
     }
 
     async Task<bool> TryHandOut(string instanceId, int depth, IReadOnlyList<Member> members, CancellationToken ct)
@@ -141,12 +197,100 @@ public sealed class TravelCoordinator(
             _awaitingLevel.TryRemove(instanceId, out _);
             _awaitingLive[instanceId] = new Trip(instanceId, members);
         }
+        await RetryAwaitingSlots(ct);
+        while (_prewarm.TryDequeue(out var p)) await PrewarmNext(p.Current, p.Members, ct);
+        foreach (var (instanceId, (depth, members, current)) in _prewarmAwaiting.ToArray())
+        {
+            if (!await TryHandOut(instanceId, depth, members, ct)) continue;
+            _prewarmAwaiting.TryRemove(instanceId, out _);
+            await TellNextLevel(current, instanceId, ct);
+        }
+    }
+
+    /// <summary>
+    /// D-H14: the party just arrived on <paramref name="current"/> (depth d): claim and boot its
+    /// d+1 level now, then tell <paramref name="current"/> that level's map so the clients can
+    /// fetch it while they play. Never hops anyone: a later descent finds the claim and the live
+    /// instance. Off in local same-process mode (one game, nothing to warm); skipped at the last
+    /// free level slot, so a real descent always has one.
+    /// </summary>
+    async Task PrewarmNext(InstanceRecord current, IReadOnlyList<Member> members, CancellationToken ct)
+    {
+        if (_same.On || current.Kind != InstanceKind.Level || members.Count == 0) return;
+        var depth = current.Depth + 1;
+        if (depth > options.MapPool.Depths) return;
+        var plan = await data.WriteAsync(async (tx, _) =>
+        {
+            var leader = members[0];
+            var party = await tx.Parties.ForCharacter(leader.CharacterId);
+            var claim = await tx.LevelClaims.Get(leader.CharacterId, depth);
+            if (claim is null) return (Hash: (string?)null, Running: (InstanceRecord?)null, Party: party?.Id);
+            foreach (var m in members) await tx.LevelClaims.Set(m.CharacterId, depth, claim.LevelHash);
+            var running = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelHash == claim.LevelHash && i.State is not InstanceState.Draining);
+            return (Hash: claim.LevelHash, Running: running, Party: party?.Id);
+        }, ct);
+        if (plan.Running is { } warm) { await LinkPrewarm(warm.Id, current, ct); await TellNextLevel(current.Id, warm.Id, ct); return; }
+
+        var levels = await data.ReadAsync((tx, _) => tx.Instances.CountLevels(
+            InstanceState.Requested, InstanceState.LevelReady, InstanceState.Creating, InstanceState.Booting,
+            InstanceState.Live, InstanceState.Suspect, InstanceState.Draining), ct);
+        if (levels >= options.Instances.MaxLevelPods) // D-H14: not started at the cap (it would only yield again)
+        {
+            log.LogInformation("no prewarm of depth {Depth} for {Level}: {Running}/{Max} level slots in use", depth, current.Id, levels, options.Instances.MaxLevelPods);
+            return;
+        }
+        if (await lifecycle.RequestLevel(depth, plan.Party, plan.Hash, null, ct) is not LevelRequestResult.Accepted accepted) return;
+        var target = accepted.Instance;
+        await LinkPrewarm(target.Id, current, ct);
+        if (plan.Hash is null && !await TryHandOut(target.Id, depth, members, ct))
+        {
+            _prewarmAwaiting[target.Id] = (depth, members, current.Id);
+            return;
+        }
+        await TellNextLevel(current.Id, target.Id, ct);
+    }
+
+    public const string PrewarmedAction = "instance.prewarmed";
+
+    readonly ConcurrentDictionary<string, string> _bspSha = new(); // map name → hex; a level's files never change
+
+    /// <summary>SHA-256 of the stored, unpacked .bsp (hex), computed once per map; "" when the file is not here.</summary>
+    async Task<string> BspSha256(string map, CancellationToken ct)
+    {
+        if (_bspSha.TryGetValue(map, out var known)) return known;
+        if (levels?.LevelFile(map, ".bsp") is not { } path || !File.Exists(path)) return "";
+        await using var f = File.OpenRead(path);
+        var hex = Convert.ToHexStringLower(await System.Security.Cryptography.SHA256.HashDataAsync(f, ct));
+        _bspSha[map] = hex;
+        return hex;
+    }
+
+    /// <summary>
+    /// D-H14 (amended): the prewarm is held open while <paramref name="parent"/> runs. Audited, so
+    /// a restarted service reads the link back (InstanceHooks.IsHeldOpen); the newest link wins.
+    /// </summary>
+    Task LinkPrewarm(string prewarmId, InstanceRecord parent, CancellationToken ct) =>
+        data.WriteAsync(async (tx, _) =>
+        {
+            await tx.Audit.Write(PrewarmedAction, prewarmId, null, new { parent = parent.Id, depth = parent.Depth + 1 }, "travel");
+            return true;
+        }, ct);
+
+    /// <summary>D-H14: tell <paramref name="currentId"/> the map of <paramref name="nextId"/> and where clients download it.</summary>
+    async Task TellNextLevel(string currentId, string nextId, CancellationToken ct)
+    {
+        var next = await data.ReadAsync((tx, _) => tx.Instances.Get(nextId), ct);
+        if (next?.LevelHash is not { } hash) return;
+        var map = MapIdentity.MapName(options.Mod.Name, next.Depth, hash);
+        if (!await commands.Send(currentId, new InstanceCommand.NextLevel(next.Depth, map, options.Instances.FastDlUrl, await BspSha256(map, ct)), ct))
+            log.LogInformation("NextLevel {Map} could not reach {Level}", map, currentId);
     }
 
     /// <summary>The target is live: flip each member's route and ask the source to prepare the hop.</summary>
     public async Task OnInstanceLive(InstanceRecord target, CancellationToken ct)
     {
         if (!_awaitingLive.TryRemove(target.Id, out var trip)) return;
+        if (target.Kind == InstanceKind.Level) _prewarm.Enqueue((target, trip.Members)); // D-H14, on the next tick
         var sessions = await data.ReadAsync(async (tx, _) =>
         {
             var byAccount = new Dictionary<string, SessionRecord>();

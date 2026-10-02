@@ -21,6 +21,12 @@ public static class OpsEndpoints
                 i.Id, kind = i.Kind.ToString(), state = i.State.ToString(), i.Depth, i.PodName, i.PodUid, i.PodIp, i.LevelHash, i.Players, i.Reason,
             }), ct)).On(ListenerRole.Admin);
 
+        // What an instance's server reported running at its last boot (SDK name, version, kind).
+        ops.MapGet("/instances/{id}/modules", (IHostData data, string id, CancellationToken ct) =>
+            data.ReadAsync(async (tx, _) =>
+                (await tx.Audit.List(new AuditQuery(Action: Api.InstanceApi.ModulesAction, Target: id, Take: 1))).FirstOrDefault() is { AfterJson: { } json }
+                    ? Results.Content(json, "application/json") : Results.NotFound(), ct)).On(ListenerRole.Admin);
+
         ops.MapGet("/audit/counts", (IHostData data, CancellationToken ct) =>
             data.ReadAsync(async (tx, _) =>
             {

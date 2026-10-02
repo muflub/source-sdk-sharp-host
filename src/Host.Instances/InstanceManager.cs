@@ -287,6 +287,11 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
 
     async Task CheckEmpty(InstanceRecord row, DateTimeOffset now, CancellationToken ct)
     {
+        if (await _hooks.IsHeldOpen(row, ct))
+        {
+            _emptySince.Remove(row.Id); // the grace starts afresh (MarkEmpty, audited) once the hold ends
+            return;
+        }
         if (!_emptySince.TryGetValue(row.Id, out var since)) { await MarkEmpty(row.Id, ct); return; }
         var empty = now - since;
         if (empty < O.EmptyGrace) return;

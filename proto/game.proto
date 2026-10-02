@@ -51,6 +51,7 @@ message ServerCommand {
     Exec exec = 16;
     LeaseRevoked lease_revoked = 17;
     HeartbeatAck heartbeat_ack = 18;
+    NextLevel next_level = 19;
   }
 }
 
@@ -63,6 +64,11 @@ message Retry { string steamid = 1; }
 // itself and the SDK reconnects as the target when the game boots that map.
 message PrepareHop { string steamid = 1; string hop_id = 2; string target_instance = 3; string map = 4; string local_connection = 5; }
 message Say { string text = 1; }
+// D-H14: the party's next level down is claimed and booting. The game's client side may fetch
+// <download_url>maps/<map>.bsp.bz2 in the background so the map is local before the hop;
+// download_url is empty when the service has no public fastdl.
+// map_sha256: SHA-256 of the unpacked <map>.bsp (what the bz2 decompresses to), empty when unknown.
+message NextLevel { int32 depth = 1; string map = 2; string download_url = 3; bytes map_sha256 = 4; }
 message Exec { string command = 1; }
 message LeaseRevoked { string character_id = 1; string reason = 2; }
 message HeartbeatAck { uint64 seq = 1; }
@@ -93,6 +99,15 @@ message BootingRequest {
   RulesModule module = 3;
   string map = 4;
   string mod_image_digest = 5; // what the pod actually runs, if the entrypoint knows it
+  // What the server runs: every non-framework assembly loaded in its process, and the modules
+  // the game declares (SourceSharp mods). Recorded per boot (instance.modules); never judged.
+  repeated LoadedModule loaded = 6;
+}
+
+message LoadedModule {
+  string name = 1;
+  string version = 2;
+  string kind = 3;     // "assembly", or what the game declared ("mod", ...)
 }
 
 message BootingResponse {
@@ -280,6 +295,9 @@ message TakeReserveRequest {
   string character_id = 2;
   bytes lease_token = 3;
   repeated TierCount wanted = 4;
+  // §5.2a: a reserve lives as long as its level. The first take of a tier after a lease sets
+  // this: the reply carries the items the character already holds there, then the top-up.
+  bool include_held = 5;
 }
 
 message TakeReserveResponse {

@@ -81,7 +81,7 @@ public sealed class ItemApi(IHostData data, DescentLedger ledger) : P.ItemServic
         data.Idempotent(context, request.RequestId, P.TakeReserveResponse.Parser, async (tx, caller) =>
         {
             var items = await ledger.TakeReserve(tx, caller, request.CharacterId, request.LeaseToken.Bytes(),
-                request.Wanted.Select(w => (w.Tier, w.Count)).ToList(), request.RequestId);
+                request.Wanted.Select(w => (w.Tier, w.Count)).ToList(), request.RequestId, request.IncludeHeld);
             var r = new P.TakeReserveResponse();
             r.Items.AddRange(items.Select(i => i.ToProto()));
             return r;

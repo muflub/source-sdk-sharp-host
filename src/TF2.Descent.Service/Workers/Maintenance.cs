@@ -33,7 +33,7 @@ public sealed class Maintenance(
     readonly DateTimeOffset _started = clock.GetUtcNow();
 
     /// <summary>
-    /// §4.3: expired leases are released every few seconds, audited; the reserve goes with them;
+    /// §4.3: expired leases are released every few seconds, audited; their reserve stays on the level (§5.2a);
     /// the pod hears LeaseRevoked. Not in the first Instances.AdoptReconnect after this service
     /// started: a lease whose deadline passed while the service was down is not the pod's fault.
     /// A pod that reconnects in the window renews its leases with its heartbeats (and a re-lease
@@ -56,7 +56,6 @@ public sealed class Maintenance(
             var gone = new List<Lease>();
             foreach (var l in await tx.Leases.Expired())
             {
-                await DescentLedger.SweepReserve(tx, l.CharacterId, l.InstanceId, "reserve_released");
                 await tx.Leases.Release(l.CharacterId, null);
                 await tx.Audit.Write("lease.expired", l.CharacterId, null, new { instance = l.InstanceId, expired = l.Expires });
                 gone.Add(l);

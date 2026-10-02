@@ -104,4 +104,46 @@ public class CommandFacts
         await sdk.Pumped(first);
         Assert.Single(h.Hops.Ready);
     }
+
+    [Fact]
+    public async Task NextLevel_arrives_with_the_map_and_where_to_download_it()
+    {
+        await using var h = await SdkHarness.Start();
+        var (_, sdk) = await Connected(h, "lvl-1", InstanceKind.Level);
+        NextLevelInfo? next = null;
+        sdk.Commands.NextLevel += n => next = n;
+        await h.Streams.Send("lvl-1", InstanceStreams.ToProto(new InstanceCommand.NextLevel(2, "tf2_descent-2-abc", "http://127.0.0.1:5004/")));
+        await sdk.PumpUntil(() => next is not null, what: "NextLevel");
+        Assert.Equal((2, "tf2_descent-2-abc"), (next!.Depth, next.Map));
+        Assert.Equal("http://127.0.0.1:5004/maps/tf2_descent-2-abc.bsp.bz2", next.MapUrl);
+    }
+
+    [Fact]
+    public async Task NextLevel_carries_the_bsps_sha256_as_32_bytes()
+    {
+        await using var h = await SdkHarness.Start();
+        var (_, sdk) = await Connected(h, "lvl-1", InstanceKind.Level);
+        NextLevelInfo? next = null;
+        sdk.Commands.NextLevel += n => next = n;
+        var sha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData("bsp"u8));
+        await h.Streams.Send("lvl-1", InstanceStreams.ToProto(new InstanceCommand.NextLevel(2, "tf2_descent-2-abc", "", sha)));
+        await sdk.PumpUntil(() => next is not null, what: "NextLevel");
+        Assert.Equal(Convert.FromHexString(sha), next!.MapSha256);
+    }
+
+    [Fact]
+    public async Task NextLevel_without_a_hash_has_none()
+    {
+        await using var h = await SdkHarness.Start();
+        var (_, sdk) = await Connected(h, "lvl-1", InstanceKind.Level);
+        NextLevelInfo? next = null;
+        sdk.Commands.NextLevel += n => next = n;
+        await h.Streams.Send("lvl-1", InstanceStreams.ToProto(new InstanceCommand.NextLevel(2, "tf2_descent-2-abc", "")));
+        await sdk.PumpUntil(() => next is not null, what: "NextLevel");
+        Assert.Null(next!.MapSha256);
+    }
+
+    [Fact]
+    public void A_NextLevel_without_a_download_url_has_no_map_url() =>
+        Assert.Null(new NextLevelInfo("c", 2, "tf2_descent-2-abc", "").MapUrl);
 }

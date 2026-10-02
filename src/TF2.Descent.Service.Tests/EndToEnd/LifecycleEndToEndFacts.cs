@@ -58,7 +58,16 @@ public class LifecycleEndToEndFacts
         var item = await w.Data.WriteAsync((tx, _) => tx.Items.Mint(new NewItem(rolled.Seed, rolled.BaseType, rolled.Rarity, rolled.ItemLevel, 1, true,
             rolled.Instance, 1, 0, 1), OwnerKind.World, level.Id, level.Id, -1, "e2e", null));
 
+        // A player holds the level while it drains: a drained level with nobody on it is reaped at
+        // the next tick, which could delete the pod before the fake's frame loop saw the Drain
+        // (failed 1 run in 7 under load). The drain is asserted first, then the player leaves.
+        var control = w.Control(level.Id);
+        await control.JoinAsync(new JoinRequest { Steamid = "76561198000000077", Name = "holder" });
+        await w.Until(async () => (await w.Instance(level.Id))!.Players == 1, "the holder counted on the level");
         await w.Lifecycle.Drain(level.Id, "e2e", "test");
+        await w.Until(() => Task.FromResult(game.Server.Events.Contains("drain e2e")), "the game told to drain");
+        Assert.Equal(InstanceState.Draining, (await w.Instance(level.Id))!.State); // held: not reaped yet
+        await control.LeaveAsync(new PlayerRequest { Steamid = "76561198000000077" });
         await w.Until(async () => (await w.Instance(level.Id))!.State == InstanceState.Reaped, "the level reaped");
         await w.Until(() => Task.FromResult(w.Pods.Get(level.PodName!) is null), "the pod deleted");
 

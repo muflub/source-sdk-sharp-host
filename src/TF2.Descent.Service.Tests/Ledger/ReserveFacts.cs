@@ -154,14 +154,68 @@ public class ReserveFacts
         Assert.Equal(0, await h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Reserve, OwnerId: ch))));
     }
 
+    // ---- §5.2a scope (ruled 2026-10-02): a reserve lives as long as its level, not its lease
+
+    static Task<int> ReserveOn(LedgerHarness h, string ch, string instance) =>
+        h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Reserve, OwnerId: ch, InstanceId: instance)));
+
     [Fact]
-    public async Task A_reserve_is_swept_when_its_lease_ends()
+    public async Task Releasing_the_lease_keeps_the_reserve_on_its_level()
     {
         var (h, ch) = await Leased();
         await using var _ = h;
         await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 4)], h.Req()));
-        Assert.Equal(4, await h.W(tx => DescentLedger.SweepReserve(tx, ch, h.Level.Id, "reserve_released")));
+        await h.W(async tx => { await DescentLedger.ReleaseCharacter(tx, h.Level, ch, h.Token(ch)); return true; });
+        Assert.Null(await h.R(tx => tx.Leases.Get(ch))); // the stimulus: the lease is gone
+        Assert.Equal(4, await ReserveOn(h, ch, h.Level.Id));
         await h.AssertBalanced();
-        Assert.Equal(0, await h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Reserve))));
+    }
+
+    [Fact]
+    public async Task A_returning_character_gets_its_held_reserve_back_then_a_top_up()
+    {
+        var (h, ch) = await Leased();
+        await using var _ = h;
+        var first = await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 4)], h.Req()));
+        await h.W(async tx => { await DescentLedger.ReleaseCharacter(tx, h.Level, ch, h.Token(ch)); return true; });
+        await h.Lease(ch, h.Level);
+        var back = await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 12)], h.Req(), includeHeld: true));
+        Assert.Equal(12, back.Count);
+        Assert.Subset(back.Select(i => i.Id).ToHashSet(), first.Select(i => i.Id).ToHashSet()); // the same four pre-rolls
+        Assert.Equal(12, await ReserveOn(h, ch, h.Level.Id));
+    }
+
+    [Fact]
+    public async Task Include_held_returns_only_the_wanted_tiers()
+    {
+        var (h, ch) = await Leased();
+        await using var _ = h;
+        await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 2), (2, 2)], h.Req()));
+        var back = await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(2, 2)], h.Req(), includeHeld: true));
+        Assert.Equal([2, 2], back.Select(i => i.Tier));
+    }
+
+    [Fact]
+    public async Task A_refill_without_include_held_returns_only_new_items()
+    {
+        var (h, ch) = await Leased();
+        await using var _ = h;
+        var first = await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 4)], h.Req()));
+        var more = await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 12)], h.Req()));
+        Assert.Equal(8, more.Count);
+        Assert.Empty(more.Select(i => i.Id).Intersect(first.Select(i => i.Id)));
+    }
+
+    [Fact]
+    public async Task The_levels_end_sweeps_a_kept_reserve()
+    {
+        var (h, ch) = await Leased();
+        await using var _ = h;
+        await h.W(tx => h.Ledger.TakeReserve(tx, h.Level, ch, h.Token(ch), [(0, 4)], h.Req()));
+        await h.W(async tx => { await DescentLedger.ReleaseCharacter(tx, h.Level, ch, h.Token(ch)); return true; });
+        Assert.Equal(4, await ReserveOn(h, ch, h.Level.Id));
+        await h.W(async tx => { await h.Ledger.SweepInstance(tx, h.Level); return true; });
+        Assert.Equal(0, await ReserveOn(h, ch, h.Level.Id));
+        await h.AssertBalanced();
     }
 }

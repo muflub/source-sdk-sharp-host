@@ -85,11 +85,10 @@ public class LedgerPropertyFacts
                     }
                     case 8:
                     {
-                        // A hop: the reserve on the old instance is swept with the lease, the character moves to a fresh level.
+                        // A hop: the reserve stays on the old level until that level ends (§5.2a, ruled
+                        // 2026-10-02); the character moves to a fresh level.
                         var next = await h.AddInstance($"lvl-{levels.Count + 1}", InstanceKind.Level, 1 + rng.Next(5));
                         levels.Add(next);
-                        if (at is not null)
-                            await h.W(tx => TF2.Descent.Service.Ledger.DescentLedger.SweepReserve(tx, c, at.Id, "reserve_released"));
                         await h.Lease(c, next);
                         break;
                     }

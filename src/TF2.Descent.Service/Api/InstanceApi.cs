@@ -85,6 +85,8 @@ public sealed class InstanceApi(
         }
     }
 
+    public const string ModulesAction = "instance.modules";
+
     public override async Task<P.BootingResponse> Booting(P.BootingRequest request, ServerCallContext context)
     {
         var caller = context.Caller();
@@ -99,6 +101,16 @@ public sealed class InstanceApi(
         try { instance = await lifecycle.OnBooting(caller.Id, request.Module.Sha256, request.ModImageDigest.Length > 0 ? request.ModImageDigest : null, context.CancellationToken); }
         catch (HostRefusal e) { throw Api.ToRpc(e); }
         if (answer == P.ModuleAnswer.Known) modules.NoteBooted(instance, request.Module.Sha256);
+        // What the server runs, per boot: read back at /ops/instances/{id}/modules.
+        await data.WriteAsync(async (tx, _) =>
+        {
+            await tx.Audit.Write(ModulesAction, caller.Id, null, new
+            {
+                sdk = request.SdkVersion, map = request.Map,
+                loaded = request.Loaded.Select(m => new { m.Name, m.Version, m.Kind }),
+            }, $"instance:{caller.Id}");
+            return true;
+        }, context.CancellationToken);
         return new P.BootingResponse
         {
             Module = answer, InstanceSeed = instance.Seed, InstanceKind = instance.Kind == InstanceKind.Hub ? "hub" : "level",
