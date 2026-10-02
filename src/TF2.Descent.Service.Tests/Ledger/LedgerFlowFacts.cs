@@ -356,4 +356,18 @@ public class LedgerFlowFacts
         var f = Assert.Single(await h.W(tx => DescentLedger.Reconcile(tx, fixCachedSums: false)), x => x.Kind == "world_item_orphan");
         Assert.Equal(item.Id, f.Target);
     }
+
+    [Fact]
+    public async Task A_death_records_the_level_it_happened_on()
+    {
+        var h = await LedgerHarness.Create();
+        await using var _ = h;
+        var level = await h.W(tx => tx.Instances.Update(h.Level.Id, i => i with { LevelHash = "L3", Depth = 3 }));
+        var ch = await h.Character();
+        await h.Lease(ch, level);
+        await h.W(tx => h.Ledger.RecordDeath(tx, level, ch, h.Token(ch), h.Req()));
+        var death = Assert.Single(await h.R(tx => tx.Audit.List(new AuditQuery(Action: TF2.Descent.Service.Ledger.DescentLedger.DeathAction, Target: ch))));
+        using var doc = System.Text.Json.JsonDocument.Parse(death.AfterJson!);
+        Assert.Equal((3, "L3", level.Id), (doc.RootElement.GetProperty("depth").GetInt32(), doc.RootElement.GetProperty("level").GetString(), doc.RootElement.GetProperty("instance").GetString()));
+    }
 }

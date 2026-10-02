@@ -535,4 +535,80 @@ public class TravelFacts
         await w.Travel.RetryWaiting(default);
         Assert.Single(w.Life.Requests);
     }
+
+    // ------------------------------------------------------------------ D-H16 death
+
+    static IEnumerable<string> HopsFrom(World w, string instance) => w.Commands.Sent.Where(c => c.StartsWith(instance + " PrepareHop", StringComparison.Ordinal));
+
+    [Fact]
+    public async Task A_character_who_dies_is_sent_to_town_alone()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.H.Lease(w.Leader, w.H.Level);
+        await w.H.Lease(w.Mate, w.H.Level);
+        await w.Travel.RespawnInTown(w.H.Level, w.Leader, default);
+        Assert.Equal([$"{w.H.Level.Id} PrepareHop {{ SteamId = 765, TargetInstanceId = {w.H.Hub.Id}, Map = , LocalConnection =  }}"], HopsFrom(w, w.H.Level.Id));
+    }
+
+    [Fact]
+    public async Task A_retried_death_sends_no_second_hop()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.H.Lease(w.Leader, w.H.Level);
+        await w.Travel.RespawnInTown(w.H.Level, w.Leader, default);
+        await w.Travel.RespawnInTown(w.H.Level, w.Leader, default);
+        Assert.Single(HopsFrom(w, w.H.Level.Id));
+    }
+
+    [Fact]
+    public async Task A_death_reported_by_a_level_that_does_not_hold_the_lease_moves_nobody()
+    {
+        var w = await Setup();
+        await using var _ = w.H; // the leader is leased on the hub
+        await w.Travel.RespawnInTown(w.H.Level, w.Leader, default);
+        Assert.Empty(HopsFrom(w, w.H.Level.Id));
+    }
+
+    static Task Died(World w, string ch, int depth, string level) => w.H.W(async tx =>
+    {
+        await tx.Audit.Write(TF2.Descent.Service.Ledger.DescentLedger.DeathAction, ch, null, new { instance = "lvl-x", depth, level, items = 0, australium = 0 });
+        return true;
+    });
+
+    [Fact]
+    public async Task Return_to_corpse_goes_to_the_level_they_died_on_whatever_depth_is_asked()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.Pool.AddReady("L3", 3);
+        await Died(w, w.Leader, 3, "L3");
+        var r = await w.Travel.Go(w.H.Hub, w.Leader, w.H.Token(w.Leader), null, 1, TravelKind.ReturnToCorpse, default);
+        Assert.Equal(P.TravelState.Started, r.State);
+        Assert.Equal(("L3", 3), ((await w.H.R(tx => tx.Instances.Get(r.InstanceId)))!.LevelHash, (await w.H.R(tx => tx.Instances.Get(r.InstanceId)))!.Depth));
+        Assert.Equal("L3", (await w.H.R(tx => tx.LevelClaims.Get(w.Leader, 3)))!.LevelHash);
+        Assert.Null(await w.H.R(tx => tx.LevelClaims.Get(w.Mate, 3))); // the character alone
+    }
+
+    [Fact]
+    public async Task Return_to_corpse_joins_the_level_while_it_still_runs()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        var running = await w.H.W(tx => tx.Instances.Update(w.H.Level.Id, i => i with { LevelHash = "L3", Depth = 3 }));
+        await Died(w, w.Leader, 3, "L3");
+        var r = await w.Travel.Go(w.H.Hub, w.Leader, w.H.Token(w.Leader), null, 3, TravelKind.ReturnToCorpse, default);
+        Assert.Equal(running.Id, r.InstanceId);
+        Assert.Empty(w.Life.Requests);
+    }
+
+    [Fact]
+    public async Task Return_to_corpse_without_a_death_is_refused()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        var e = await Assert.ThrowsAsync<HostRefusal>(() => w.Travel.Go(w.H.Hub, w.Leader, w.H.Token(w.Leader), null, 3, TravelKind.ReturnToCorpse, default));
+        Assert.Equal("no_corpse_level", e.Reason);
+    }
 }

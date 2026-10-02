@@ -393,6 +393,8 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
     // ------------------------------------------------------------------ death, corpse, Lost & Found (D6, D7)
 
     /// <summary>Everything carried becomes Corpse-owned on this instance; the Australium held moves onto the corpse.</summary>
+    public const string DeathAction = "character.death";
+
     public async Task<IReadOnlyList<ItemRecord>> RecordDeath(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token, string requestId)
     {
         var (ch, _) = await Leased(tx, caller, characterId, token);
@@ -404,7 +406,8 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
             await tx.Characters.AddAustralium(characterId, -ch.Australium, "corpse", $"corpse:{caller.Id}");
         if (ch.Hardcore)
             await tx.Characters.Update(characterId, ch.Version, c => c with { Fallen = true });
-        await tx.Audit.Write("character.death", characterId, null, new { instance = caller.Id, items = moved.Count, australium = ch.Australium });
+        // D-H16: where they died, so ReturnToCorpse goes back to that level (depth + level hash).
+        await tx.Audit.Write(DeathAction, characterId, null, new { instance = caller.Id, depth = caller.Depth, level = caller.LevelHash, items = moved.Count, australium = ch.Australium });
         return moved;
     }
 

@@ -75,7 +75,7 @@ public sealed class CharacterApi(IHostData data, DescentLedger ledger) : P.Chara
 }
 
 /// <summary>§6.3: the ledger of §5 as RPCs.</summary>
-public sealed class ItemApi(IHostData data, DescentLedger ledger) : P.ItemService.ItemServiceBase
+public sealed class ItemApi(IHostData data, DescentLedger ledger, Travel.TravelCoordinator? travel = null) : P.ItemService.ItemServiceBase
 {
     public override Task<P.TakeReserveResponse> TakeReserve(P.TakeReserveRequest request, ServerCallContext context) =>
         data.Idempotent(context, request.RequestId, P.TakeReserveResponse.Parser, async (tx, caller) =>
@@ -177,9 +177,14 @@ public sealed class ItemApi(IHostData data, DescentLedger ledger) : P.ItemServic
         data.Idempotent(context, request.RequestId, P.Item.Parser, async (tx, caller) =>
             (await ledger.Transform(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), "craft", request.Inputs, request.Recipe, request.RequestId))[0].ToProto());
 
-    public override Task<P.ItemsResponse> RecordDeath(P.RecordDeathRequest request, ServerCallContext context) =>
-        data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>
+    public override async Task<P.ItemsResponse> RecordDeath(P.RecordDeathRequest request, ServerCallContext context)
+    {
+        var r = await data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>
             (await ledger.RecordDeath(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.RequestId)).ToProto());
+        // D-H16: after the death is committed, the character respawns in town.
+        if (travel is not null) await travel.RespawnInTown(context.Caller(), request.CharacterId, context.CancellationToken);
+        return r;
+    }
 
     public override Task<P.ItemsResponse> LootCorpse(P.LootCorpseRequest request, ServerCallContext context) =>
         data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>

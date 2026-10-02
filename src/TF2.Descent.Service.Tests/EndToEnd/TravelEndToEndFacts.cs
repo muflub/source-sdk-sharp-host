@@ -200,7 +200,11 @@ public class TravelEndToEndFacts
         Assert.All(owners, o => Assert.Equal(OwnerKind.Corpse, o));
         Assert.Equal(carried, died.ItemIds.Order());
 
-        await Trip(w, level.Id, c => c.TownPortalAsync(new TravelRequest { Steamid = a.SteamId.ToString() }).ResponseAsync, a, b);
+        // D-H16: the dead hero respawns in town by themselves; the party member stays until they portal out.
+        if (!await a.Client.WaitOnInstanceAsync(hub.Id, E2eWorld.T)) Assert.Fail("the dead hero never respawned in town");
+        await w.Until(async () => (await w.Data.ReadAsync((tx, _) => tx.Leases.Get(a.CharacterId)))?.InstanceId == hub.Id, "the dead hero leased in town");
+        Assert.Equal(level.Id, (await w.Data.ReadAsync((tx, _) => tx.Leases.Get(b.CharacterId)))?.InstanceId);
+        await Trip(w, level.Id, c => c.TownPortalAsync(new TravelRequest { Steamid = b.SteamId.ToString() }).ResponseAsync, b);
         await w.Until(async () => (await w.Instance(level.Id))!.Terminal, "the level reaped");
         var pod = (await w.Instance(level.Id))!.PodName!;
         await w.Until(() => Task.FromResult(w.Pods.Get(pod) is null), "the level's pod deleted");

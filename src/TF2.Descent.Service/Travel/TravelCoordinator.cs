@@ -89,6 +89,19 @@ public sealed class TravelCoordinator(
                           ?? throw HostRefusal.Exhausted("no_hub", "no live hub");
                 return (Target: (InstanceRecord?)hub, Hash: (string?)null, Members: members);
             }
+            if (kind == TravelKind.ReturnToCorpse)
+            {
+                // D-H16: back to the level they died on, whatever depth was asked; the character alone.
+                var death = (await tx.Audit.List(new AuditQuery(Action: DescentLedger.DeathAction, Target: characterId, Take: 1))).FirstOrDefault();
+                using var doc = death?.AfterJson is { } json ? JsonDocument.Parse(json) : null;
+                if (doc is null || !doc.RootElement.TryGetProperty("level", out var lv) || lv.GetString() is not { } died
+                    || !doc.RootElement.TryGetProperty("depth", out var dv))
+                    throw HostRefusal.Precondition("no_corpse_level", $"{characterId} has no level it died on");
+                depth = dv.GetInt32();
+                await tx.LevelClaims.Set(characterId, depth, died);
+                var at = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelHash == died && i.State is not InstanceState.Draining);
+                return (Target: at, Hash: (string?)died, Members: members.Where(m => m.CharacterId == characterId).ToList());
+            }
             if (depth < 1 || depth > options.MapPool.Depths)
                 throw new HostRefusal(RefusalCode.InvalidArgument, "bad_depth", $"depth {depth}");
             if (kind is TravelKind.Descend or TravelKind.StairsDown && depth > leader.ReachedDepth + 1)
@@ -133,9 +146,38 @@ public sealed class TravelCoordinator(
     // 3. Hop when it is live.
     async Task HopWhenLive(InstanceRecord target, IReadOnlyList<Member> members, CancellationToken ct)
     {
-        _awaitingLive[target.Id] = new Trip(target.Id, members);
+        // Two trips to one target (a party's town portal and a death's respawn) travel together.
+        _awaitingLive.AddOrUpdate(target.Id, new Trip(target.Id, members), (_, t) => t with { Members = [.. t.Members, .. members] });
         if (target.State == InstanceState.Live) await OnInstanceLive(target, ct);
         else if (_same.On) await OnInstanceBooting(target, ct);
+    }
+
+    readonly ConcurrentDictionary<string, bool> _respawning = new(); // characters on their way to town after a death
+
+    /// <summary>
+    /// D-H16: a character who died on <paramref name="level"/> respawns in town: that one character
+    /// is sent to the hub as a town portal for one (PrepareHop to their level, HopReady, Retry).
+    /// The rest of the party stays. Idempotent: a retried RecordDeath starts no second trip.
+    /// </summary>
+    public async Task RespawnInTown(InstanceRecord level, string characterId, CancellationToken ct)
+    {
+        if (level.Kind != InstanceKind.Level) return;
+        var plan = await data.ReadAsync(async (tx, _) =>
+        {
+            if ((await tx.Leases.Get(characterId))?.InstanceId != level.Id) return (Member: (Member?)null, Hub: (InstanceRecord?)null);
+            var ch = await tx.Characters.Get(characterId);
+            var hubs = (await tx.Instances.NonTerminal()).Where(i => i.Kind == InstanceKind.Hub).ToList();
+            var hub = hubs.FirstOrDefault(i => i.State == InstanceState.Live)
+                      ?? (_same.On ? hubs.FirstOrDefault(i => i.State == InstanceState.Booting) : null);
+            return (Member: ch is null ? null : new Member(characterId, ch.Account, level.Id), Hub: hub);
+        }, ct);
+        if (plan.Member is not { } member || plan.Hub is not { } hub)
+        {
+            log.LogWarning("{Character} died on {Level} but cannot respawn in town: {Why}", characterId, level.Id, plan.Member is null ? "not leased there" : "no hub");
+            return;
+        }
+        if (!_respawning.TryAdd(characterId, true)) return;
+        await HopWhenLive(hub, [member], ct);
     }
 
     sealed record SlotWait(int Depth, string? PartyId, string? Hash, IReadOnlyList<Member> Members);
@@ -334,6 +376,7 @@ public sealed class TravelCoordinator(
     public async Task HopReady(InstanceRecord caller, string hopId, string steamId, CancellationToken ct)
     {
         if (!_prepared.TryRemove(hopId, out var m)) { log.LogWarning("HopReady for unknown hop {Hop}", hopId); return; }
+        _respawning.TryRemove(m.CharacterId, out _);
         if (_sameProcessHops.TryRemove(hopId, out _))
         {
             await lifecycle.Leave(m.SourceInstance, "same_process_hop", ct);
