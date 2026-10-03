@@ -195,6 +195,14 @@ public sealed class ReserveOptions
 
 public sealed class MapPoolOptions
 {
+    /// <summary>
+    /// §9.2: the image a bake Job runs (the service image, which has the `bake` subcommand); empty
+    /// leaves bakes off and packs are uploaded. Kubernetes only.
+    /// </summary>
+    public string BakeImage { get; set; } = "";
+    /// <summary>The service's maps volume claim, mounted by the bake Job to read the library source.</summary>
+    public string BakeMapsClaim { get; set; } = "maps-tf2-descent-service-0";
+    public TimeSpan BakeTimeout { get; set; } = TimeSpan.FromMinutes(30);
     public int Depths { get; set; } = 15;
     public int DefaultPerDepth { get; set; } = 3;
     public Dictionary<int, int> PerDepth { get; set; } = [];

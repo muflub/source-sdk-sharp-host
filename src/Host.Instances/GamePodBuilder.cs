@@ -22,6 +22,10 @@ public static class GamePodBuilder
 
     public static string SecretName(string podName) => podName + "-token";
 
+    /// <summary>The mod init container's copy of the mod image onto the game volume, and pool/ made traversable.</summary>
+    public static string ModInitCommand(string modName) =>
+        $"cp -a /game/. /out/ && mkdir -p /out/mods/{modName}/pool && chmod 0755 /out/mods/{modName}/pool";
+
     public static string KindLabel(InstanceKind kind) => kind == InstanceKind.Hub ? "hub" : "level";
 
     /// <summary>The map a level runs: "&lt;mod&gt;-&lt;depth&gt;-&lt;hash&gt;" (Q18); the hub runs the town map.</summary>
@@ -49,7 +53,10 @@ public static class GamePodBuilder
         var init = new List<ContainerSpec>();
         if (!o.SkipModInit)
             init.Add(new ContainerSpec("mod", o.ModImage.ToString(),
-                ["sh", "-c", "cp -a /game/. /out/"], [], [], [],
+                // The level overlay mounts at <mod>/pool/maps: pool/ must be enterable by the game's
+                // user whatever the image shipped (178bfc1 shipped it root 0744, and every level
+                // map load failed "not found").
+                ["sh", "-c", ModInitCommand(mod.Name)], [], [], [],
                 [new MountSpec(GameVolume, "/out")]));
         if (!hub && !o.SkipLevelFetch)
             init.Add(new ContainerSpec("fetch-level", string.IsNullOrEmpty(o.FetchLevelImage) ? o.EngineImage : o.FetchLevelImage,

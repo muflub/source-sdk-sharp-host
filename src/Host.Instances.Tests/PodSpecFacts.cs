@@ -66,7 +66,7 @@ public class PodSpecFacts
     {
         var mod = Pod(InstanceKind.Hub).Spec.InitContainers.Single(c => c.Name == "mod");
         Assert.Equal("reg.local/tf2-descent-mod:42", mod.Image);
-        Assert.Equal(["sh", "-c", "cp -a /game/. /out/"], mod.Command);
+        Assert.Equal(["sh", "-c", "cp -a /game/. /out/ && mkdir -p /out/mods/tf2_descent/pool && chmod 0755 /out/mods/tf2_descent/pool"], mod.Command);
         Assert.Equal(("game", "/out"), (mod.VolumeMounts.Single().Name, mod.VolumeMounts.Single().MountPath));
     }
 

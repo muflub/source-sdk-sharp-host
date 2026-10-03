@@ -48,6 +48,11 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: { name: SOURCESHARP_SERVICE_MapPool__AutoActivateBakes, value: "true" }
+      # §9.2: a library dropped under /maps/library is baked by a Job from the service image
+      # (`make deploy` rewrites :latest to the deployed tag).
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: SOURCESHARP_SERVICE_MapPool__BakeImage, value: "localhost:30500/tf2-descent-service:latest" }
       - op: replace
         path: /spec/template/spec/containers/0/resources
         value: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 2Gi } }

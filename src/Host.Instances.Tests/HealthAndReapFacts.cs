@@ -261,6 +261,35 @@ public class HealthAndReapFacts
     }
 
     [Fact]
+    public async Task A_held_level_heartbeating_empty_does_not_re_audit_empty()
+    {
+        // Measured on k3s: a held prewarm wrote instance.empty every 5 s, at each heartbeat.
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        h.Hooks.HeldOpen.Add(row.Id);
+        await h.Tick(); // the hold is seen
+        var before = (await h.Actions(row.Id)).Count(a => a == "instance.empty");
+        for (var i = 0; i < 4; i++) await Beat(h, row.Id, 0, h.Options.Instances.HeartbeatInterval);
+        await h.Tick();
+        Assert.Equal(before, (await h.Actions(row.Id)).Count(a => a == "instance.empty"));
+    }
+
+    [Fact]
+    public async Task A_held_level_a_player_joins_closes_its_empty_edge()
+    {
+        // Measured on k3s: a prewarm audited empty before its hold was seen, then a player joined
+        // and no instance.occupied followed, so a restart would read it as empty since boot.
+        await using var h = new ManagerHarness();
+        var row = await h.LiveLevel();
+        await h.M.OnHeartbeat(row.Id, 0);
+        Assert.Equal("instance.empty", (await h.Actions(row.Id)).Last(a => a is "instance.empty" or "instance.occupied"));
+        h.Hooks.HeldOpen.Add(row.Id);
+        await h.Tick(); // the hold is seen
+        await h.M.OnHeartbeat(row.Id, 1);
+        Assert.Equal("instance.occupied", (await h.Actions(row.Id)).Last(a => a is "instance.empty" or "instance.occupied"));
+    }
+
+    [Fact]
     public async Task Its_empty_grace_starts_when_the_hold_ends()
     {
         await using var h = new ManagerHarness();

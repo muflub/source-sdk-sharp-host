@@ -37,7 +37,9 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
     readonly Dictionary<string, DateTimeOffset> _bootDeadline = [];
     readonly Dictionary<string, DateTimeOffset> _reconnectDeadline = [];
     readonly Dictionary<string, DateTimeOffset> _emptySince = [];
-    readonly HashSet<string> _leaving = [];   // Leave: reaped when the stream closes, nothing else ends them
+    readonly HashSet<string> _leaving = [];
+    readonly HashSet<string> _heldEmptyEdge = []; // held levels whose newest audited edge is "instance.empty": a join still closes it
+    readonly HashSet<string> _held = [];      // empty levels a hook holds open (D-H14): no empty clock, no empty audits   // Leave: reaped when the stream closes, nothing else ends them
     readonly List<DateTimeOffset> _hubFailures = [];
     int _hubConsecutiveFailures;
     DateTimeOffset _hubNextAttempt = DateTimeOffset.MinValue;
@@ -179,14 +181,14 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
     /// <summary>Starts the empty clock and records the edge, so a restarted service resumes the same grace.</summary>
     async Task MarkEmpty(string id, CancellationToken ct)
     {
-        if (_emptySince.ContainsKey(id)) return;
+        if (_emptySince.ContainsKey(id) || _held.Contains(id)) return;
         _emptySince[id] = Now;
         await Audit(EmptyAction, id, null, Actor, ct);
     }
 
     async Task MarkOccupied(string id, int players, CancellationToken ct)
     {
-        if (!_emptySince.Remove(id)) return;
+        if (!_emptySince.Remove(id) & !_heldEmptyEdge.Remove(id)) return;
         await Audit(OccupiedAction, id, new { players }, Actor, ct);
     }
 
@@ -289,9 +291,12 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
     {
         if (await _hooks.IsHeldOpen(row, ct))
         {
-            _emptySince.Remove(row.Id); // the grace starts afresh (MarkEmpty, audited) once the hold ends
+            _held.Add(row.Id);
+            if (_emptySince.Remove(row.Id)) _heldEmptyEdge.Add(row.Id); // the grace starts afresh (MarkEmpty, audited) once the hold ends
             return;
         }
+        _held.Remove(row.Id);
+        _heldEmptyEdge.Remove(row.Id);
         if (!_emptySince.TryGetValue(row.Id, out var since)) { await MarkEmpty(row.Id, ct); return; }
         var empty = now - since;
         if (empty < O.EmptyGrace) return;
@@ -442,6 +447,8 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
         _bootDeadline.Remove(id);
         _reconnectDeadline.Remove(id);
         _emptySince.Remove(id);
+        _held.Remove(id);
+        _heldEmptyEdge.Remove(id);
     }
 
     /// <summary>§7.3: hub re-creation backs off 1 s … 30 s; five failures in five minutes stop it (audited).</summary>

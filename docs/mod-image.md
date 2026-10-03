@@ -17,7 +17,7 @@ recorded on its `instances` row.
 | `/game/bin/dotnet/` | the private .NET runtime the game hosts | the engine image carries no .NET |
 | `/game/mods/<Mod.Name>/` | the mod's game directory (`gameinfo.txt`, `maps/`, …) | `-game /game/mods/<Mod.Name>`; levels are overlaid at `pool/maps/`, which the mod's `gameinfo.txt` adds as a search path (`game \|gameinfo_path\|pool`) so a level loads by its plain name |
 | `/game/mods/<Mod.Name>/mod.dedicated.yaml` | the mod's dedicated settings as `source# -resolve <id> -dedicated` writes them: `mods.yaml`'s defaults and `engine.dedicated` already merged, flat keys `fd_limit`, `restart_exit_code`, `args` (a block list, or `[]`), `env` (a block map, or `{}`), plain scalars only | the entrypoint applies `fd_limit` as `ulimit -n`, exports `env` and puts `args` before the pod's; a missing file or a line it does not know stops the pod (exit 64 / 65). `restart_exit_code` is source#'s own: pods never restart |
-| `/bin/sh` and `cp` | a shell and coreutils | the init container runs `sh -c "cp -a /game/. /out/"`; a `busybox` base is enough |
+| `/bin/sh` and `cp` | a shell and coreutils (`cp`, `mkdir`, `chmod`) | the init container copies `/game` onto the game volume, then makes `mods/<Mod.Name>/pool/` exist with mode 0755 (the level overlay mounts at `pool/maps` and the game's user must enter `pool/`); a `busybox` base is enough. Don't ship `pool/`; if you do, it is set to 0755 (178bfc1 shipped it 0744 and no level loaded) |
 | label `org.sourcesharp.mod=<Mod.Name>` | the mod the image is for | the service refuses to create a pod from an image whose label differs |
 
 The rules module the host replays with is **not** read from this image: the game
@@ -50,7 +50,7 @@ own token from a per-pod Secret).
 initContainers:
   - name: mod
     image: <Instances.ModImage>
-    command: [sh, -c, "cp -a /game/. /out/"]
+    command: [sh, -c, "cp -a /game/. /out/ && mkdir -p /out/mods/<Mod.Name>/pool && chmod 0755 /out/mods/<Mod.Name>/pool"]
     volumeMounts: [{ name: game, mountPath: /out }]
 ```
 
