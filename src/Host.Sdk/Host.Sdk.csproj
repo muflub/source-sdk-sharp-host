@@ -2,7 +2,7 @@
   <PropertyGroup>
     <!-- The package version is HostSdk.Version (a fact compares them): the wire changes with the
          major, so two SDKs that speak different wires must never share a NuGet identity. -->
-    <Version>2.4.0</Version>
+    <Version>2.5.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <!-- Host.Proto ships inside this package (plan §6.6 "Delivery"): no SourceSharp.Host.Proto package

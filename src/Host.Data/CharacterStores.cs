@@ -75,6 +75,7 @@ internal sealed class CharacterStore(Ctx c) : ICharacterStore
         row.Deleted = true;
         row.Version++;
         await c.Save();
+        await c.Db.Anchors.Where(x => x.CharacterId == id).ExecuteDeleteAsync(); // D-H16: a deleted character's teleporter goes with it
     }
 
     public async Task<long> AddAustralium(string characterId, long delta, string reason, string? reference)

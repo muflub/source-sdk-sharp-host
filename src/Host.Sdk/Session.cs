@@ -33,6 +33,8 @@ public interface IHostSession
     Task<HostResult<BootInfo>> Booting(string map, string? modImageDigest = null);
     /// <summary>The port the socket reports; the answer is the port the pod was given (<see cref="HostError.PortMismatch"/> if they differ).</summary>
     Task<HostResult<int>> MapReady(int port, string map);
+    /// <summary>D-H16: the teleporters on this level copy, as the last MapReady answered (set in Pump): rebuild each entrance.</summary>
+    IReadOnlyList<HostAnchor> LevelAnchors { get; }
     /// <summary>A player connected from <paramref name="peer"/> (as the engine sees it); the answer carries the real address and session.</summary>
     Task<HostResult<PlayerJoin>> PlayerJoined(string peer, string steamId);
     Task<HostResult> PlayerLeft(string steamId, string peer);
@@ -253,7 +255,7 @@ internal sealed class HostSession : IHostSession
             if (!up.Ok) return HostResult<BootInfo>.Refused(up.Refusal!);
             uploaded = true;
         }
-        var info = new BootInfo((ModuleAnswer)(int)r.Value.Module, r.Value.InstanceSeed, r.Value.InstanceKind, r.Value.Depth, r.Value.LevelHash, uploaded);
+        var info = new BootInfo((ModuleAnswer)(int)r.Value.Module, r.Value.InstanceSeed, r.Value.InstanceKind, r.Value.Depth, r.Value.LevelHash, uploaded, r.Value.LevelId);
         return HostResult<BootInfo>.Success(info);
     }, onMain: r => { if (r.Ok) Boot = r.Value; });
 
@@ -299,8 +301,12 @@ internal sealed class HostSession : IHostSession
         }
         var request = new P.MapReadyRequest { RequestId = Rpc.NewRequestId(), Port = port, Map = map };
         var r = await _core.Rpc.Call((m, d, ct) => _core.Instance.MapReadyAsync(request, m, d, ct)).ConfigureAwait(false);
+        if (r.Ok) _pendingAnchors = r.Value.Anchors.Select(a => a.ToSdk()).ToList();
         return r.Map(v => v.ExpectedPort);
-    });
+    }, _ => { if (_pendingAnchors is { } a) LevelAnchors = a; });
+
+    IReadOnlyList<HostAnchor>? _pendingAnchors;
+    public IReadOnlyList<HostAnchor> LevelAnchors { get; private set; } = [];
 
     public Task<HostResult<PlayerJoin>> PlayerJoined(string peer, string steamId) => _core.Background(async () =>
     {

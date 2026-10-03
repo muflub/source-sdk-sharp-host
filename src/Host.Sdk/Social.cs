@@ -38,7 +38,16 @@ public interface ITravel
     Task<HostResult<TravelOutcome>> StairsDown(ICharacterLease leader, string partyId, int depth);
     Task<HostResult<TravelOutcome>> TownPortal(ICharacterLease caller);
     Task<HostResult<TravelOutcome>> ReturnThroughPortal(ICharacterLease caller);
+    [Obsolete("D-H16 (2026-10-03): the way back is a teleporter (ReturnToAnchor) or the stairs; removed at the next major")]
     Task<HostResult<TravelOutcome>> ReturnToCorpse(ICharacterLease caller);
+
+    /// <summary>D-H16, on a level: the caller's teleporter entrance here (a new one replaces the old).</summary>
+    Task<HostResult<HostAnchor>> PlaceAnchor(ICharacterLease caller, HostVec3 position, float yaw);
+    Task<HostResult> ClearAnchor(ICharacterLease caller);
+    /// <summary>In town: the teleporters of the caller's party (its own when in none), one exit pad each.</summary>
+    Task<HostResult<IReadOnlyList<HostAnchor>>> ListPartyAnchors(ICharacterLease caller);
+    /// <summary>In town: the caller alone, through <paramref name="anchorOwner"/>'s teleporter (the caller or a party mate). Write the arrival into that level's store first.</summary>
+    Task<HostResult<TravelOutcome>> ReturnToAnchor(ICharacterLease caller, string anchorOwner);
 }
 
 /// <summary>§6.4 Lost &amp; Found.</summary>
@@ -151,7 +160,26 @@ internal sealed class Travel(SdkCore core) : ITravel
     public Task<HostResult<TravelOutcome>> StairsDown(ICharacterLease leader, string partyId, int depth) => Run(leader, partyId, depth, core.TravelClient.StairsDownAsync);
     public Task<HostResult<TravelOutcome>> TownPortal(ICharacterLease caller) => Run(caller, "", 0, core.TravelClient.TownPortalAsync);
     public Task<HostResult<TravelOutcome>> ReturnThroughPortal(ICharacterLease caller) => Run(caller, "", 0, core.TravelClient.ReturnThroughPortalAsync);
+    [Obsolete("D-H16 (2026-10-03): the way back is a teleporter (ReturnToAnchor) or the stairs; removed at the next major")]
     public Task<HostResult<TravelOutcome>> ReturnToCorpse(ICharacterLease caller) => Run(caller, "", 0, core.TravelClient.ReturnToCorpseAsync);
+
+    static void Tok(P.TravelRequest r, ByteString t) => r.LeaseToken = t;
+    P.TravelRequest Req(ICharacterLease lease) => new() { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId };
+
+    public Task<HostResult<HostAnchor>> PlaceAnchor(ICharacterLease caller, HostVec3 position, float yaw) =>
+        LeasedCall.Run(core, caller,
+            new P.PlaceAnchorRequest { RequestId = Rpc.NewRequestId(), CharacterId = caller.CharacterId, Position = new P.Vec3 { X = position.X, Y = position.Y, Z = position.Z }, Yaw = yaw },
+            (r, t) => r.LeaseToken = t, core.TravelClient.PlaceAnchorAsync, a => a.ToSdk());
+
+    public async Task<HostResult> ClearAnchor(ICharacterLease caller) =>
+        (await LeasedCall.Run(core, caller, Req(caller), Tok, core.TravelClient.ClearAnchorAsync, _ => true)).Untyped();
+
+    public Task<HostResult<IReadOnlyList<HostAnchor>>> ListPartyAnchors(ICharacterLease caller) =>
+        LeasedCall.Run(core, caller, Req(caller), Tok, core.TravelClient.ListPartyAnchorsAsync, l => (IReadOnlyList<HostAnchor>)l.Anchors.Select(a => a.ToSdk()).ToList());
+
+    public Task<HostResult<TravelOutcome>> ReturnToAnchor(ICharacterLease caller, string anchorOwner) =>
+        LeasedCall.Run(core, caller, new P.ReturnToAnchorRequest { RequestId = Rpc.NewRequestId(), CharacterId = caller.CharacterId, AnchorOwner = anchorOwner },
+            (r, t) => r.LeaseToken = t, core.TravelClient.ReturnToAnchorAsync, r => r.ToSdk());
 }
 
 internal sealed class LostAndFoundApi(SdkCore core) : ILostAndFound

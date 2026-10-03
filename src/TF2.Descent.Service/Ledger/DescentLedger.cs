@@ -407,7 +407,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         if (ch.Hardcore)
             await tx.Characters.Update(characterId, ch.Version, c => c with { Fallen = true });
         // D-H16: where they died, so ReturnToCorpse goes back to that level (depth + level hash).
-        await tx.Audit.Write(DeathAction, characterId, null, new { instance = caller.Id, depth = caller.Depth, level = caller.LevelHash, items = moved.Count, australium = ch.Australium });
+        await tx.Audit.Write(DeathAction, characterId, null, new { instance = caller.Id, depth = caller.Depth, level = caller.LevelCopy, items = moved.Count, australium = ch.Australium });
         return moved;
     }
 
@@ -470,25 +470,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         foreach (var i in await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Reserve, InstanceId: instance.Id, Take: 100_000)))
         { await tx.Items.Terminate(i.Id, OwnerKind.Reserve, ItemState.Swept, "level_shutdown", null); reserve++; }
 
-        var corpses = await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Corpse, InstanceId: instance.Id, Take: 100_000));
-        foreach (var byOwner in corpses.GroupBy(i => i.OwnerId))
-        {
-            var ch = await tx.Characters.Get(byOwner.Key);
-            foreach (var i in byOwner)
-            {
-                if (ch is null || ch.Hardcore)
-                {
-                    await tx.Items.Terminate(i.Id, OwnerKind.Corpse, ItemState.Destroyed, "hardcore_death", null);
-                    destroyed++;
-                    continue;
-                }
-                var fee = r is null ? 0 : (long)Math.Round(r.Price(r.Items.Decode(i.Instance, i.SchemaVersion), PriceKind.VendorValue) * LostAndFoundFeeShare);
-                await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Corpse, OwnerKind.LostAndFound, ch.Id, "lost_and_found", InstanceId: null));
-                await tx.LostAndFound.Add(ch.Id, i.Id, fee, instance.Id);
-                lf++;
-            }
-            if (ch is { Hardcore: false }) await ReturnCorpseAustralium(tx, ch.Id, instance.Id, "lost_and_found");
-        }
+        (lf, destroyed) = await CorpsesToLostAndFound(tx, instance.Id, r);
 
         if (instance.Kind == InstanceKind.Hub)
         {
@@ -510,6 +492,54 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         var counts = new SweepCounts(world, reserve, lf, destroyed, vendor, escrow, cancelled);
         await tx.Audit.Write("instance.sweep", instance.Id, null, counts);
         return counts;
+    }
+
+    /// <summary>
+    /// The corpses lying at <paramref name="place"/> (an instance id, or a level copy's pending
+    /// place, D-H18) go to their owners' Lost &amp; Found with the Australium they held, at 25 % of
+    /// vendor value when the rules are known; a hardcore character's are destroyed.
+    /// </summary>
+    public static async Task<(int ToLostAndFound, int Destroyed)> CorpsesToLostAndFound(IWriteTx tx, string place, IGameRules? r)
+    {
+        var lf = 0; var destroyed = 0;
+        var corpses = await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Corpse, InstanceId: place, Take: 100_000));
+        foreach (var byOwner in corpses.GroupBy(i => i.OwnerId))
+        {
+            var ch = await tx.Characters.Get(byOwner.Key);
+            foreach (var i in byOwner)
+            {
+                if (ch is null || ch.Hardcore)
+                {
+                    await tx.Items.Terminate(i.Id, OwnerKind.Corpse, ItemState.Destroyed, "hardcore_death", null);
+                    destroyed++;
+                    continue;
+                }
+                var fee = r is null ? 0 : (long)Math.Round(r.Price(r.Items.Decode(i.Instance, i.SchemaVersion), PriceKind.VendorValue) * LostAndFoundFeeShare);
+                await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Corpse, OwnerKind.LostAndFound, ch.Id, "lost_and_found", InstanceId: null));
+                await tx.LostAndFound.Add(ch.Id, i.Id, fee, place);
+                lf++;
+            }
+            if (ch is { Hardcore: false }) await ReturnCorpseAustralium(tx, ch.Id, place, "lost_and_found");
+        }
+        return (lf, destroyed);
+    }
+
+    /// <summary>
+    /// D-H18: a character's corpse moves from <paramref name="from"/> to <paramref name="to"/> (instance
+    /// ids, or a level copy's pending place) with the Australium it holds; one owner throughout.
+    /// </summary>
+    public static async Task<int> MoveCorpse(IWriteTx tx, string characterId, string from, string to, string reason)
+    {
+        var items = await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Corpse, OwnerId: characterId, InstanceId: from, Take: 10_000));
+        foreach (var i in items)
+            await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Corpse, OwnerKind.Corpse, characterId, reason, InstanceId: to, Slot: i.Slot));
+        var held = -(await tx.Characters.AustraliumLedger(characterId)).Where(e => e.Ref == $"corpse:{from}").Sum(e => e.Delta);
+        if (held > 0)
+        {
+            await tx.Characters.AddAustralium(characterId, held, reason, $"corpse:{from}");
+            await tx.Characters.AddAustralium(characterId, -held, reason, $"corpse:{to}");
+        }
+        return items.Count;
     }
 
     // ------------------------------------------------------------------ trades (2d, two-phase)

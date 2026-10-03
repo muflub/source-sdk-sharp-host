@@ -28,7 +28,8 @@ public sealed class Maintenance(
     MaintenanceState state,
     TimeProvider clock,
     ILogger<Maintenance> log,
-    IHostApplicationLifetime? lifetime = null) : BackgroundService
+    IHostApplicationLifetime? lifetime = null,
+    StoreSweep? store = null) : BackgroundService
 {
     readonly DateTimeOffset _started = clock.GetUtcNow();
 
@@ -112,6 +113,16 @@ public sealed class Maintenance(
         await data.BackupAsync(file, ct);
         var daily = Path.Combine(dir, $"daily-{now:yyyyMMdd}.db");
         if (!File.Exists(daily)) File.Copy(file, daily);
+        if (store is not null)
+        {
+            // D-H17: store.db beside it, on the same schedule and retention.
+            var storeFile = Path.Combine(dir, $"store-hourly-{now:yyyyMMdd-HHmm}.db");
+            await store.Backup(storeFile, ct);
+            var storeDaily = Path.Combine(dir, $"store-daily-{now:yyyyMMdd}.db");
+            if (!File.Exists(storeDaily)) File.Copy(storeFile, storeDaily);
+            Prune(dir, "store-hourly-", options.Data.HourlyBackups);
+            Prune(dir, "store-daily-", options.Data.DailyBackups);
+        }
         Prune(dir, "hourly-", options.Data.HourlyBackups);
         Prune(dir, "daily-", options.Data.DailyBackups);
         state.LastBackup = now;
@@ -149,6 +160,7 @@ public sealed class Maintenance(
             await Due("reconcile", o.Maintenance.Reconcile, ct => Reconcile(ct));
             await Due("purge", TimeSpan.FromHours(6), ct => Purge(ct));
             await Due("backup", o.Maintenance.Backup, ct => Backup(ct));
+            if (store is not null) await Due("store", o.Maintenance.StoreSweep, ct => store.Run(ct));
         }
     }
 }

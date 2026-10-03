@@ -111,6 +111,26 @@ public class TravelEndToEndFacts
     }
 
     [Fact]
+    public async Task Through_a_party_mates_teleporter_a_hero_returns_alone_and_the_level_reads_where_to_spawn()
+    {
+        var (w, a, b, party) = await PartyOnTheHub();
+        await using var _ = w;
+        var hub = (await w.Hub())!;
+        var l1 = await Descend(w, hub.Id, a, 1, party, a, b);
+        var placed = await w.Control(l1.Id).PlaceAnchorAsync(new AnchorRequest { Steamid = a.SteamId.ToString(), X = 5, Y = 6, Z = 7 });
+        Assert.True(placed.Ok, placed.Reason);
+        await Trip(w, l1.Id, c => c.TownPortalAsync(new TravelRequest { Steamid = a.SteamId.ToString() }).ResponseAsync, a, b);
+
+        var pads = await w.Control(hub.Id).AnchorsAsync(new PlayerRequest { Steamid = b.SteamId.ToString() });
+        Assert.Equal([a.CharacterId], pads.Owners);
+        var back = await Trip(w, hub.Id, c => c.ReturnToAnchorAsync(new AnchorRequest { Steamid = b.SteamId.ToString(), Owner = a.CharacterId }).ResponseAsync, b);
+        Assert.Equal(l1.Id, back.Id);
+        await w.Until(() => Task.FromResult(w.Pods.Game(l1.Id)!.Server.Events.Any(e => e.StartsWith($"arrival {b.SteamId} {a.CharacterId} 5,6,7 taken", StringComparison.Ordinal))),
+            "the level read the arrival town left");
+        Assert.Equal(hub.Id, (await w.Data.ReadAsync((tx, _) => tx.Leases.Get(a.CharacterId)))!.InstanceId); // the caller alone
+    }
+
+    [Fact]
     public async Task Arriving_on_depth_1_boots_depth_2_tells_its_map_and_the_next_descent_lands_on_it()
     {
         var (w, a, b, party) = await PartyOnTheHub(new() { ["Instances:FastDlUrl"] = "http://maps.example:5004/" });

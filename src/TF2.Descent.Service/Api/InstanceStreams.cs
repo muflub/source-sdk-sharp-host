@@ -78,6 +78,8 @@ public sealed class InstanceStreams : IInstanceCommands
         } },
         InstanceCommand.Exec e => new P.ServerCommand { Exec = new P.Exec { Command = e.Command } },
         InstanceCommand.LeaseRevoked r => new P.ServerCommand { LeaseRevoked = new P.LeaseRevoked { CharacterId = r.CharacterId, Reason = r.Reason } },
+        InstanceCommand.AnchorsChanged a => new P.ServerCommand { AnchorsChanged = new P.AnchorsChanged { PartyId = a.PartyId } },
+        InstanceCommand.StoreChanged s => new P.ServerCommand { StoreChanged = new P.StoreChanged { Scope = (P.StoreScope)(int)s.Scope, Owner = s.Owner, Key = s.Key } },
         _ => throw new ArgumentOutOfRangeException(nameof(command), command.GetType().Name),
     };
 }

@@ -24,12 +24,13 @@ public class TravelFacts
             var row = await h.AddInstance(id, InstanceKind.Level, depth);
             row = await h.W(tx => tx.Instances.Update(id, r => r with
             {
-                State = levelHash is null ? InstanceState.Requested : InstanceState.LevelReady, LevelHash = levelHash, PodIp = $"10.42.1.{_n}",
+                State = levelHash is null ? InstanceState.Requested : InstanceState.LevelReady, PodIp = $"10.42.1.{_n}",
+                LevelHash = levelHash is null ? null : LevelIds.HashOf(levelHash), LevelId = levelHash, // as the manager does (D-H18)
             }));
             return new LevelRequestResult.Accepted(row);
         }
         public Task<InstanceRecord> AssignLevel(string instanceId, string levelHash, long packVersion, CancellationToken ct = default) =>
-            h.W(tx => tx.Instances.Update(instanceId, r => r with { State = InstanceState.LevelReady, LevelHash = levelHash }));
+            h.W(tx => tx.Instances.Update(instanceId, r => r with { State = InstanceState.LevelReady, LevelHash = levelHash, LevelId = levelHash }));
         public Task<InstanceRecord?> Authenticate(string instanceId, string token, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<InstanceRecord> OnBooting(string instanceId, string rulesSha256, string? modImageDigest, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<MapReadyResult> OnMapReady(string instanceId, int port, CancellationToken ct = default) => throw new NotImplementedException();
@@ -114,6 +115,48 @@ public class TravelFacts
         Assert.Equal(P.TravelState.Started, r.State);
         Assert.Equal(("L1", "L1"), ((await w.H.R(tx => tx.LevelClaims.Get(w.Leader, 1)))!.LevelHash, (await w.H.R(tx => tx.LevelClaims.Get(w.Mate, 1)))!.LevelHash));
         Assert.Equal("L1", (await w.H.R(tx => tx.Instances.Get(r.InstanceId)))!.LevelHash);
+    }
+
+    // ---- D-H18: level copies
+
+    [Fact]
+    public async Task A_claim_on_a_level_copy_boots_that_copy_not_the_running_original()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        var original = await w.H.AddInstance("lvl-orig", InstanceKind.Level, 1);
+        await w.H.W(tx => tx.Instances.Update(original.Id, r => r with { State = InstanceState.Live, LevelHash = "L1" }));
+        await w.H.W(tx => tx.LevelClaims.Set(w.Leader, 1, "L1~COPY"));
+        var r = await w.Descend(1);
+        var row = (await w.H.R(tx => tx.Instances.Get(r.InstanceId)))!;
+        Assert.NotEqual(original.Id, r.InstanceId);
+        Assert.Equal(("L1", "L1~COPY"), (row.LevelHash, row.LevelId));
+    }
+
+    [Fact]
+    public async Task A_claim_on_the_original_finds_the_running_original()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        var original = await w.H.AddInstance("lvl-orig", InstanceKind.Level, 1);
+        await w.H.W(tx => tx.Instances.Update(original.Id, r => r with { State = InstanceState.Live, LevelHash = "L1" })); // a row from before copies: no LevelId
+        await w.H.W(tx => tx.LevelClaims.Set(w.Leader, 1, "L1"));
+        Assert.Equal(original.Id, (await w.Descend(1)).InstanceId);
+    }
+
+    [Fact]
+    public async Task Ending_a_session_keeps_a_level_another_copy_of_it_is_claimed_on()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.H.W(tx => tx.LevelClaims.Set(w.Leader, 1, "L1"));
+        await w.H.W(tx => tx.LevelClaims.Set(w.Mate, 1, "L1~COPY"));
+        await w.H.W(tx => tx.Leases.Release(w.Leader, null)); // the mate keeps its lease: still playing
+        var worker = new TravelWorker(w.Travel, w.H.D.Data, w.Pool, w.H.Options, w.H.D.Clock, NullLogger<TravelWorker>.Instance);
+        w.H.D.Clock.Advance(w.H.Options.Travel.SessionIdle + TimeSpan.FromMinutes(1));
+        Assert.Equal(0, await worker.EndIdleSessions(default));
+        Assert.Null(await w.H.R(tx => tx.LevelClaims.Get(w.Leader, 1))); // the session did end
+        Assert.Empty(w.Pool.Retired);
     }
 
     [Fact]
@@ -569,6 +612,104 @@ public class TravelFacts
         await using var _ = w.H; // the leader is leased on the hub
         await w.Travel.RespawnInTown(w.H.Level, w.Leader, default);
         Assert.Empty(HopsFrom(w, w.H.Level.Id));
+    }
+
+    // ---- D-H16 amended: through a teleporter
+
+    static Task<AnchorRecord> Anchor(World w, string owner, string level, int depth) =>
+        w.H.W(tx => tx.Anchors.Set(new AnchorRecord(owner, level, depth, 1, 2, 3, 0, w.H.D.Clock.GetUtcNow())));
+
+    [Fact]
+    public async Task Through_a_party_mates_teleporter_the_caller_alone_joins_its_running_level()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.H.W(tx => tx.Instances.Update(w.H.Level.Id, r => r with { LevelHash = "L3", LevelId = "L3~X" }));
+        await Anchor(w, w.Mate, "L3~X", 3);
+        var r = await w.Travel.ToAnchor(w.H.Hub, w.Leader, w.H.Token(w.Leader), w.Mate, "req", default);
+        Assert.Equal((P.TravelState.Started, w.H.Level.Id), (r.State, r.InstanceId));
+        Assert.Equal([$"{w.H.Hub.Id} PrepareHop {{ SteamId = 765, TargetInstanceId = {w.H.Level.Id}, Map = , LocalConnection =  }}"], HopsFrom(w, w.H.Hub.Id));
+    }
+
+    [Fact]
+    public async Task Through_a_teleporter_its_level_copy_becomes_the_callers_level_for_that_depth()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await Anchor(w, w.Mate, "L3~X", 3);
+        await w.Travel.ToAnchor(w.H.Hub, w.Leader, w.H.Token(w.Leader), w.Mate, "req", default);
+        Assert.Equal("L3~X", (await w.H.R(tx => tx.LevelClaims.Get(w.Leader, 3)))!.LevelId);
+    }
+
+    [Fact]
+    public async Task A_teleporter_whose_level_is_not_running_boots_that_copy()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await Anchor(w, w.Leader, "L3~X", 3);
+        var r = await w.Travel.ToAnchor(w.H.Hub, w.Leader, w.H.Token(w.Leader), w.Leader, "req", default);
+        Assert.Equal(["L3~X"], w.Life.Requests);
+        Assert.Equal(3, (await w.H.R(tx => tx.Instances.Get(r.InstanceId)))!.Depth);
+    }
+
+    [Fact]
+    public async Task A_teleporter_of_someone_outside_the_party_is_refused()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        var stranger = await w.H.Character("Cy", account: "767");
+        await Anchor(w, stranger, "L3~X", 3);
+        var e = await Assert.ThrowsAsync<HostRefusal>(() => w.Travel.ToAnchor(w.H.Hub, w.Leader, w.H.Token(w.Leader), stranger, "req", default));
+        Assert.Equal("not_in_party", e.Reason);
+    }
+
+    [Fact]
+    public async Task A_party_mate_without_a_teleporter_is_refused()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        var e = await Assert.ThrowsAsync<HostRefusal>(() => w.Travel.ToAnchor(w.H.Hub, w.Leader, w.H.Token(w.Leader), w.Mate, "req", default));
+        Assert.Equal("no_anchor", e.Reason);
+    }
+
+    [Fact]
+    public async Task A_teleporter_return_from_a_level_is_refused()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.H.Lease(w.Leader, w.H.Level);
+        await Anchor(w, w.Leader, "L3~X", 3);
+        var e = await Assert.ThrowsAsync<HostRefusal>(() => w.Travel.ToAnchor(w.H.Level, w.Leader, w.H.Token(w.Leader), w.Leader, "req", default));
+        Assert.Equal("not_a_hub", e.Reason);
+    }
+
+    [Fact]
+    public async Task A_session_ending_removes_teleporters_on_level_copies_nobody_claims_any_more()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.H.W(tx => tx.LevelClaims.Set(w.Leader, 3, "L3~X"));
+        await Anchor(w, w.Leader, "L3~X", 3);
+        await w.H.W(tx => tx.Leases.Release(w.Leader, null));
+        var worker = new TravelWorker(w.Travel, w.H.D.Data, w.Pool, w.H.Options, w.H.D.Clock, NullLogger<TravelWorker>.Instance);
+        w.H.D.Clock.Advance(w.H.Options.Travel.SessionIdle + TimeSpan.FromMinutes(1));
+        await worker.EndIdleSessions(default);
+        Assert.Null(await w.H.R(tx => tx.Anchors.Get(w.Leader)));
+    }
+
+    [Fact]
+    public async Task A_session_ending_keeps_a_teleporter_whose_level_copy_a_party_mate_still_claims()
+    {
+        var w = await Setup();
+        await using var _ = w.H;
+        await w.H.W(tx => tx.LevelClaims.Set(w.Leader, 3, "L3~X"));
+        await w.H.W(tx => tx.LevelClaims.Set(w.Mate, 3, "L3~X"));
+        await Anchor(w, w.Leader, "L3~X", 3);
+        await w.H.W(tx => tx.Leases.Release(w.Leader, null)); // the mate keeps its lease
+        var worker = new TravelWorker(w.Travel, w.H.D.Data, w.Pool, w.H.Options, w.H.D.Clock, NullLogger<TravelWorker>.Instance);
+        w.H.D.Clock.Advance(w.H.Options.Travel.SessionIdle + TimeSpan.FromMinutes(1));
+        await worker.EndIdleSessions(default);
+        Assert.NotNull(await w.H.R(tx => tx.Anchors.Get(w.Leader)));
     }
 
     static Task Died(World w, string ch, int depth, string level) => w.H.W(async tx =>

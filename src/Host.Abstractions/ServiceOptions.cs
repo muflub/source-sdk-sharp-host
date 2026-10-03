@@ -16,6 +16,7 @@ public sealed class ServiceOptions
     public ReserveOptions Reserve { get; set; } = new();
     public MapPoolOptions MapPool { get; set; } = new();
     public DataOptions Data { get; set; } = new();
+    public StoreOptions Store { get; set; } = new();
     public ModuleOptions Modules { get; set; } = new();
     public AdminOptions Admin { get; set; } = new();
     public TravelOptions Travel { get; set; } = new();
@@ -30,6 +31,8 @@ public sealed class MaintenanceOptions
     public TimeSpan Reconcile { get; set; } = TimeSpan.FromHours(24);
     public TimeSpan Backup { get; set; } = TimeSpan.FromHours(1);
     public TimeSpan TerminalItemRetention { get; set; } = TimeSpan.FromDays(30);
+    /// <summary>D-H17: how often store data whose owner ended is removed.</summary>
+    public TimeSpan StoreSweep { get; set; } = TimeSpan.FromMinutes(5);
 }
 
 public sealed class TravelOptions
@@ -222,6 +225,26 @@ public sealed class DataOptions
     public int HourlyBackups { get; set; } = 24;
     public int DailyBackups { get; set; } = 7;
     public TimeSpan IdempotencyRetention { get; set; } = TimeSpan.FromHours(24);
+}
+
+/// <summary>D-H17: the key/value store's file and limits.</summary>
+public sealed class StoreOptions
+{
+    /// <summary>A file path, or ":memory:"; empty is store.db beside Data.Path (":memory:" when that is).</summary>
+    public string Path { get; set; } = "";
+
+    public string ResolvePath(string dataPath) =>
+        Path.Length > 0 ? Path
+        : dataPath == ":memory:" ? ":memory:"
+        : System.IO.Path.Combine(System.IO.Path.GetDirectoryName(dataPath) ?? "", "store.db");
+    public int MaxKeyBytes { get; set; } = 128;
+    public int MaxValueBytes { get; set; } = 64 * 1024;
+    public int MaxKeys { get; set; } = 256;
+    public long MaxBytes { get; set; } = 4L * 1024 * 1024;
+    public int TownMaxKeys { get; set; } = 1024;
+    public long TownMaxBytes { get; set; } = 16L * 1024 * 1024;
+    /// <summary>Loaded owners past this many value bytes are dropped from memory, least recently used first.</summary>
+    public long CacheBytes { get; set; } = 64L * 1024 * 1024;
 }
 
 public sealed class ModuleOptions

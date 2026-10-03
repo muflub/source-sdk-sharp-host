@@ -77,8 +77,11 @@ public static class RoomsBaker
         var options = VbspOptions.Default with { Format = resolution.Resolved };
 
         var skyboxRoom = plan.SkyboxRoom is { } skyName ? plan.Rooms.First(r => r.Definition.Name == skyName) : null;
+        // Both ranges, as the town is compiled (-both): the engine runs a map in HDR only when its
+        // three HDR lumps are present, and an LDR level flips HDR on every town <-> level hop, a
+        // full material reload on the client.
         RoomLightingSettings? lighting = settings.Light
-            ? new RoomLightingSettings(StockArgs.ParseVrad(["room"]).Options with { Compliance = options.Compliance })
+            ? new RoomLightingSettings(StockArgs.ParseVrad(["room"]).Options with { Compliance = options.Compliance, Range = VradLightingRange.Both })
             {
                 Sun = RoomLightingSettings.SunOf(plan.LibraryEntities), DoorLight = true, Skybox = skyboxRoom,
             }

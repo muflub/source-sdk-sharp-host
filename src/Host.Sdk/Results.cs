@@ -29,6 +29,19 @@ public enum HostError
     ModuleRefused,
     /// <summary>The SDK was disposed while the call was pending.</summary>
     Disposed,
+    // 2.5.0 (D-H16..18). Appended: a game's compiled switch keeps the values above.
+    /// <summary>A store compare-and-set (or delete) found another version.</summary>
+    VersionMismatch,
+    /// <summary>The store owner is at its key or byte limit.</summary>
+    StoreFull, ValueTooLarge, KeyTooLong,
+    /// <summary>No such level copy for this caller (a hub names one nothing claims or runs; a level runs none yet).</summary>
+    NoLevel,
+    /// <summary>A level named another level's store data.</summary>
+    NotYourLevel,
+    /// <summary>The named character has placed no teleporter.</summary>
+    NoAnchor,
+    /// <summary>A teleporter goes on a level; the hub asked.</summary>
+    NotALevel,
 }
 
 /// <summary>A refusal: the typed error, the wire reason (or the SDK's own), the human text, and whether it was decided locally.</summary>
@@ -45,6 +58,9 @@ public sealed record HostRefusal(HostError Error, string Reason, string Detail, 
         ["no_character"] = HostError.NoCharacter, ["no_item"] = HostError.NoItem, ["no_party"] = HostError.NoParty, ["no_trade"] = HostError.NoTrade,
         ["pool_empty"] = HostError.PoolEmpty, ["instance_cap"] = HostError.InstanceCap,
         ["sdk_version"] = HostError.SdkVersion, ["contract_version"] = HostError.ContractVersion,
+        ["version_mismatch"] = HostError.VersionMismatch, ["store_full"] = HostError.StoreFull, ["value_too_large"] = HostError.ValueTooLarge,
+        ["key_too_long"] = HostError.KeyTooLong, ["no_level"] = HostError.NoLevel, ["not_your_level"] = HostError.NotYourLevel,
+        ["no_anchor"] = HostError.NoAnchor, ["not_a_level"] = HostError.NotALevel,
     };
 
     /// <summary>The status codes that mean "try again with the same request id", never a business answer.</summary>

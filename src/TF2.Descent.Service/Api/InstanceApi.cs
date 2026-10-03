@@ -114,7 +114,7 @@ public sealed class InstanceApi(
         return new P.BootingResponse
         {
             Module = answer, InstanceSeed = instance.Seed, InstanceKind = instance.Kind == InstanceKind.Hub ? "hub" : "level",
-            Depth = instance.Depth, LevelHash = instance.LevelHash ?? "",
+            Depth = instance.Depth, LevelHash = instance.LevelHash ?? "", LevelId = instance.LevelCopy ?? "",
         };
     }
 
@@ -139,7 +139,13 @@ public sealed class InstanceApi(
         if (result.Outcome == MapReadyOutcome.PortMismatch)
             throw new RpcException(new Status(StatusCode.FailedPrecondition,
                 $"port_mismatch: the socket reports {request.Port}, the pod was given {result.Instance.ExpectedPort}"), new Metadata { { "x-reason", "port_mismatch" } });
-        return new P.MapReadyResponse { ExpectedPort = result.Instance.ExpectedPort };
+        // D-H18: a corpse waiting for this level copy (its owner left the party) now lies here.
+        await data.WriteAsync((tx, _) => Travel.LevelForks.AdoptCorpses(tx, result.Instance), context.CancellationToken);
+        var ready = new P.MapReadyResponse { ExpectedPort = result.Instance.ExpectedPort };
+        // D-H16: every teleporter on this level copy, so a fresh instance of it rebuilds them.
+        if (result.Instance.Kind == InstanceKind.Level && result.Instance.LevelCopy is { } level)
+            ready.Anchors.AddRange((await data.ReadAsync((tx, _) => tx.Anchors.OnLevel(level), context.CancellationToken)).Select(Travel.Anchors.ToProto));
+        return ready;
     }
 
     public override Task<P.PlayerJoinedResponse> PlayerJoined(P.PlayerJoinedRequest request, ServerCallContext context) =>

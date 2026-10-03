@@ -39,6 +39,48 @@ namespace SourceSharp.Host.Data.Migrations
                     b.ToTable("accounts", (string)null);
                 });
 
+            modelBuilder.Entity("SourceSharp.Host.Data.AnchorRow", b =>
+                {
+                    b.Property<string>("CharacterId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("character_id");
+
+                    b.Property<int>("Depth")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("depth");
+
+                    b.Property<string>("LevelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("level_id");
+
+                    b.Property<long>("Placed")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("placed");
+
+                    b.Property<float>("X")
+                        .HasColumnType("REAL")
+                        .HasColumnName("x");
+
+                    b.Property<float>("Y")
+                        .HasColumnType("REAL")
+                        .HasColumnName("y");
+
+                    b.Property<float>("Yaw")
+                        .HasColumnType("REAL")
+                        .HasColumnName("yaw");
+
+                    b.Property<float>("Z")
+                        .HasColumnType("REAL")
+                        .HasColumnName("z");
+
+                    b.HasKey("CharacterId");
+
+                    b.HasIndex("LevelId");
+
+                    b.ToTable("anchors", (string)null);
+                });
+
             modelBuilder.Entity("SourceSharp.Host.Data.AuditRow", b =>
                 {
                     b.Property<long>("Id")
@@ -258,6 +300,10 @@ namespace SourceSharp.Host.Data.Migrations
                     b.Property<string>("LevelHash")
                         .HasColumnType("TEXT")
                         .HasColumnName("level_hash");
+
+                    b.Property<string>("LevelId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("level_id");
 
                     b.Property<long?>("LiveAt")
                         .HasColumnType("INTEGER")
@@ -538,10 +584,10 @@ namespace SourceSharp.Host.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("last_used");
 
-                    b.Property<string>("LevelHash")
+                    b.Property<string>("LevelId")
                         .IsRequired()
                         .HasColumnType("TEXT")
-                        .HasColumnName("level_hash");
+                        .HasColumnName("level_id");
 
                     b.Property<long>("Since")
                         .HasColumnType("INTEGER")
@@ -549,7 +595,7 @@ namespace SourceSharp.Host.Data.Migrations
 
                     b.HasKey("CharacterId", "Depth");
 
-                    b.HasIndex("LevelHash");
+                    b.HasIndex("LevelId");
 
                     b.ToTable("character_levels", (string)null);
                 });

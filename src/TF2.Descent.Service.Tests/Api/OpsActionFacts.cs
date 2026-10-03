@@ -6,7 +6,7 @@ using SourceSharp.Host.Testing;
 
 namespace TF2.Descent.Service.Tests.Api;
 
-/// <summary>/ops/instances/{id}/exec and /drain: the admin UI's lifecycle calls, for a script.</summary>
+/// <summary>/ops/instances/{id}/exec, /drain and /ops/packs/{mod}/{library}/rebake: the admin UI's calls, for a script.</summary>
 public class OpsActionFacts
 {
     static async Task<(TestService Svc, AdminFakeLifecycle Life)> Start()
@@ -69,5 +69,29 @@ public class OpsActionFacts
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         Assert.Contains("drain:hub-9", life.Calls);
         Assert.Contains("Draining", await r.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Rebake_queues_a_bake_job_for_the_library()
+    {
+        var (svc, _) = await Start();
+        await using var _s = svc;
+        var data = svc.App.Services.GetRequiredService<IHostData>();
+        var before = await data.ReadAsync((tx, _) => tx.MapJobs.List(null, 1000));
+        var r = await svc.Http(ListenerRole.Admin).PostAsync("/ops/packs/tf2_descent/crypt2/rebake", null);
+        Assert.Equal(HttpStatusCode.Accepted, r.StatusCode);
+        var after = await data.ReadAsync((tx, _) => tx.MapJobs.List(null, 1000));
+        var added = Assert.Single(after, j => before.All(b => b.Id != j.Id));
+        Assert.Equal(MapJobKind.Bake, added.Kind);
+        Assert.StartsWith("bake:tf2_descent:crypt2:rebake-", added.Key);
+    }
+
+    [Fact]
+    public async Task Rebake_is_not_served_on_the_internal_listener()
+    {
+        var (svc, _) = await Start();
+        await using var _s = svc;
+        var r = await svc.Http(ListenerRole.Internal).PostAsync("/ops/packs/tf2_descent/crypt2/rebake", null);
+        Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
     }
 }

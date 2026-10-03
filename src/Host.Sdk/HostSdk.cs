@@ -71,7 +71,7 @@ public sealed class HostSdkOptions
 public sealed class HostSdk : IAsyncDisposable
 {
     /// <summary>Announced in Booting; the service refuses an SDK major it does not speak (§6.6).</summary>
-    public const string Version = "2.4.0";
+    public const string Version = "2.5.0";
 
     readonly SdkCore _core;
     readonly HostSession _session;
@@ -86,6 +86,8 @@ public sealed class HostSdk : IAsyncDisposable
     public ITrades Trades { get; }
     public ITravel Travel { get; }
     public ILostAndFound LostAndFound { get; }
+    /// <summary>D-H17: bytes kept across restarts, per level copy, instance, character, and town.</summary>
+    public IHostStore Store { get; }
     public IPeers Peers { get; }
     public IHostClock Clock => _core.Options.Clock;
     public IHostMetrics Metrics => _core.Metrics;
@@ -102,6 +104,7 @@ public sealed class HostSdk : IAsyncDisposable
         Trades = new Trades(_core);
         Travel = new Travel(_core);
         LostAndFound = new LostAndFoundApi(_core);
+        Store = new HostStore(_core);
         _peers = new Peers(_core);
         Peers = _peers;
         _session = new HostSession(_core, commands);
@@ -160,6 +163,7 @@ internal sealed class SdkCore : IDisposable
     public P.TradeService.TradeServiceClient TradeClient { get; }
     public P.TravelService.TravelServiceClient TravelClient { get; }
     public P.LostAndFoundService.LostAndFoundServiceClient LostAndFoundClient { get; }
+    public P.StoreService.StoreServiceClient StoreClient { get; }
 
     public SdkCore(HostEndpoint endpoint, HostSdkOptions options)
     {
@@ -174,6 +178,7 @@ internal sealed class SdkCore : IDisposable
         TradeClient = new(Rpc.Channel);
         TravelClient = new(Rpc.Channel);
         LostAndFoundClient = new(Rpc.Channel);
+        StoreClient = new(Rpc.Channel);
     }
 
     /// <summary>Runs <paramref name="work"/> off the main thread and completes the returned task only inside Pump().</summary>

@@ -190,6 +190,25 @@ public class MaintenanceFacts
     }
 
     [Fact]
+    public async Task A_backup_copies_the_store_with_what_it_holds()
+    {
+        await using var h = await LedgerHarness.Create();
+        await using var store = new SourceSharp.Host.Data.KeyValueStore(new StoreOptions { Path = ":memory:" });
+        await store.Set(StoreOwner.Town, "k", [5], null);
+        h.Options.Data.BackupPath = Path.Combine(Path.GetTempPath(), $"sourcesharp-backups-{Guid.NewGuid():N}");
+        var m = new Maintenance(h.D.Data, h.Ledger, new Commands(), h.Options, new MaintenanceState(), h.D.Clock, NullLogger<Maintenance>.Instance,
+            store: new StoreSweep(h.D.Data, store));
+        try
+        {
+            await m.Backup(default);
+            var copy = Assert.Single(Directory.GetFiles(h.Options.Data.BackupPath, "store-hourly-*.db"));
+            await using var restored = new SourceSharp.Host.Data.KeyValueStore(new StoreOptions { Path = copy });
+            Assert.Equal([5], (await restored.Get(StoreOwner.Town, "k"))!.Value);
+        }
+        finally { Directory.Delete(h.Options.Data.BackupPath, true); }
+    }
+
+    [Fact]
     public async Task Purge_drops_old_request_ids_and_old_terminal_items()
     {
         await using var h = await LedgerHarness.Create();

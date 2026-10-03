@@ -26,6 +26,21 @@ public static class ServiceComposition
             return new HostData(new HostDataOptions { Path = o.Data.Path }, sp.GetRequiredService<TimeProvider>());
         });
         services.AddSingleton<IHostData>(sp => sp.GetRequiredService<HostData>());
+        // D-H17: its own file, so a store write never waits on the ledger's writer.
+        services.AddSingleton(sp =>
+        {
+            var o = sp.GetRequiredService<ServiceOptions>();
+            var path = o.Store.ResolvePath(o.Data.Path);
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && path != ":memory:") Directory.CreateDirectory(dir);
+            return new KeyValueStore(new StoreOptions
+            {
+                Path = path, MaxKeyBytes = o.Store.MaxKeyBytes, MaxValueBytes = o.Store.MaxValueBytes, MaxKeys = o.Store.MaxKeys,
+                MaxBytes = o.Store.MaxBytes, TownMaxKeys = o.Store.TownMaxKeys, TownMaxBytes = o.Store.TownMaxBytes, CacheBytes = o.Store.CacheBytes,
+            });
+        });
+        services.AddSingleton<IKeyValueStore>(sp => sp.GetRequiredService<KeyValueStore>());
+        services.AddSingleton<Workers.StoreSweep>();
 
         // D-H9: modules arrive from the pods; a hash stays loaded while a live instance or a ready level refers to it.
         services.AddRulesModules(sp => () => sp.GetRequiredService<IHostData>().ReadAsync<IReadOnlySet<string>>(async (tx, _) =>
@@ -51,6 +66,7 @@ public static class ServiceComposition
         });
         services.AddSingleton<IHopListener>(sp => sp.GetRequiredService<Travel.TravelCoordinator>());
         services.AddSingleton<Travel.ITripPlanner>(sp => sp.GetRequiredService<Travel.TravelCoordinator>());
+        services.AddSingleton<Travel.Anchors>();
 
         // Kubernetes in production; D-H13's local host when Instances.Host = Local (tests override either).
         services.AddSingleton<IInstanceHost>(sp =>
@@ -98,7 +114,8 @@ public static class ServiceComposition
             .AddServiceOptions<PartyApi>(Auth)
             .AddServiceOptions<TradeApi>(Auth)
             .AddServiceOptions<LostAndFoundApi>(Auth)
-            .AddServiceOptions<Travel.TravelApi>(Auth);
+            .AddServiceOptions<Travel.TravelApi>(Auth)
+            .AddServiceOptions<StoreApi>(Auth);
     }
 
     /// <summary>After the test's overrides: the pieces that must see the final registrations.</summary>
@@ -122,6 +139,7 @@ public static class ServiceComposition
         app.MapGrpcService<TradeApi>().On(ListenerRole.GameApi);
         app.MapGrpcService<LostAndFoundApi>().On(ListenerRole.GameApi);
         app.MapGrpcService<Travel.TravelApi>().On(ListenerRole.GameApi);
+        app.MapGrpcService<StoreApi>().On(ListenerRole.GameApi);
         app.MapGrpcService<Gateway.GatewayHealthApi>().On(ListenerRole.GatewayApi);
         app.MapGrpcService<Gateway.GatewayEventsApi>().On(ListenerRole.GatewayApi);
         app.MapFastDl().On(ListenerRole.FastDl);

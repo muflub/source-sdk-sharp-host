@@ -67,6 +67,8 @@ public sealed class ApiHarness : IAsyncDisposable
     public P.InstanceService.InstanceServiceClient Instances => new(Channel);
     public P.PartyService.PartyServiceClient Parties => new(Channel);
     public P.TradeService.TradeServiceClient Trades => new(Channel);
+    public P.StoreService.StoreServiceClient Store => new(Channel);
+    public P.TravelService.TravelServiceClient Travel => new(Channel);
 
     /// <summary>Creates a character through the hub and leases it on <paramref name="auth"/>'s instance.</summary>
     public async Task<(string Id, Google.Protobuf.ByteString Token)> LeasedCharacter(Metadata hub, Metadata on, string account = "76561198000000001")

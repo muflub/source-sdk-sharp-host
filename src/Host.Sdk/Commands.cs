@@ -78,6 +78,12 @@ public sealed record NextLevelInfo(string CommandId, int Depth, string Map, stri
     public string? MapUrl => DownloadUrl.Length == 0 ? null : $"{DownloadUrl.TrimEnd('/')}/maps/{Map}.bsp.bz2";
 }
 
+/// <summary>D-H16: a teleporter of this party was placed, moved or cleared: lay out the pads again from ITravel.ListPartyAnchors. <paramref name="PartyId"/> is empty for a player in no party.</summary>
+public sealed record AnchorsChangedInfo(string CommandId, string PartyId);
+
+/// <summary>D-H17: a store key this server can read changed (TOWN, or this level's data written by town). Read it with IHostStore.</summary>
+public sealed record StoreChangedInfo(string CommandId, HostStoreScope Scope, string Owner, string Key);
+
 /// <summary>
 /// A same-process hop's target (D-H13 local mode): its map, and its level's .bsp/.nav3d/.map2d as
 /// absolute paths (empty for the hub, whose map ships with the mod).
@@ -96,6 +102,8 @@ public interface IHostCommands
     event Action<HopRequest>? PrepareHop;
     /// <summary>D-H14: the party's next level down is booting; its map can be fetched in the background.</summary>
     event Action<NextLevelInfo>? NextLevel;
+    event Action<AnchorsChangedInfo>? AnchorsChanged;
+    event Action<StoreChangedInfo>? StoreChanged;
 }
 
 internal sealed class HostCommands(SdkCore core) : IHostCommands
@@ -108,6 +116,8 @@ internal sealed class HostCommands(SdkCore core) : IHostCommands
     public event Action<ExecRequest>? Exec;
     public event Action<HopRequest>? PrepareHop;
     public event Action<NextLevelInfo>? NextLevel;
+    public event Action<AnchorsChangedInfo>? AnchorsChanged;
+    public event Action<StoreChangedInfo>? StoreChanged;
 
     /// <summary>Called on the stream's reader thread: nothing is raised here, only queued.</summary>
     public void OnCommand(P.ServerCommand c)
@@ -139,6 +149,15 @@ internal sealed class HostCommands(SdkCore core) : IHostCommands
             case P.ServerCommand.KindOneofCase.LeaseRevoked:
                 core.Leases.Revoked(c.LeaseRevoked.CharacterId, c.LeaseRevoked.Reason);
                 break;
+            case P.ServerCommand.KindOneofCase.AnchorsChanged:
+                core.Main.Post(() => AnchorsChanged?.Invoke(new AnchorsChangedInfo(id, c.AnchorsChanged.PartyId)));
+                break;
+            case P.ServerCommand.KindOneofCase.StoreChanged:
+            {
+                var s = c.StoreChanged;
+                core.Main.Post(() => StoreChanged?.Invoke(new StoreChangedInfo(id, (HostStoreScope)(int)s.Scope, s.Owner, s.Key)));
+                break;
+            }
         }
     }
 

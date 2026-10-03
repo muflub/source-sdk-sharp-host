@@ -90,6 +90,27 @@ public static class Samples
         finally { BakeLock.Release(); }
     }
 
+    static BakeResult? _lit;
+
+    /// <summary>
+    /// rooms-3x3 baked once per test run with lighting, as the bake Job runs it. Slower than
+    /// <see cref="BakedAsync"/>: only the facts about baked light use it.
+    /// </summary>
+    public static async Task<BakeResult> LitBakedAsync()
+    {
+        await BakeLock.WaitAsync();
+        try
+        {
+            if (_lit is not null) return _lit;
+            var lib = CopyLibrary();
+            var output = Path.Combine(Path.GetDirectoryName(lib.Directory)!, "out", Library + ".roompack");
+            _lit = await RoomsBaker.BakeAsync(lib, new BakeSettings(lib.Directory, null, output, Threads: 2, Light: true));
+            if (!_lit.Ok) throw new InvalidOperationException("the sample did not bake lit:\n" + _lit.Log);
+            return _lit;
+        }
+        finally { BakeLock.Release(); }
+    }
+
     /// <summary>A private copy of the baked pack.</summary>
     public static async Task<string> PackCopyAsync()
     {

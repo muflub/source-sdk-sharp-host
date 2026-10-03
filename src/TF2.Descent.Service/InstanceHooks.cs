@@ -80,9 +80,11 @@ public sealed class InstanceHooks(
             await ledger.SweepInstance(tx, instance);
             return true;
         }, ct);
-        // D-H12: a level a character still claims for its session stays handed out.
+        // D-H12: a level a character still claims for its session stays handed out; D-H18: so does
+        // one another copy of it is running on.
         if (instance.Kind == InstanceKind.Level && instance.LevelHash is { } hash && pool is not null
-            && await data.ReadAsync((tx, _) => tx.LevelClaims.ClaimsOn(hash), ct) == 0)
+            && await data.ReadAsync(async (tx, _) => await tx.LevelClaims.ClaimsOn(hash) == 0
+                && !(await tx.Instances.NonTerminal()).Any(i => i.Id != instance.Id && i.LevelHash == hash), ct))
             await pool.RetireLevelAsync(hash);
     }
 

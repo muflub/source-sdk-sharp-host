@@ -50,6 +50,7 @@ public interface IReadTx
     ISettingsStore Settings { get; }
     IRulesModuleStore Modules { get; }
     ILevelClaimStore LevelClaims { get; }
+    IAnchorStore Anchors { get; }
     DateTimeOffset Now { get; }
 }
 
@@ -289,11 +290,25 @@ public interface IRulesModuleStore
 public interface ILevelClaimStore
 {
     Task<LevelClaim?> Get(string characterId, int depth);
-    Task<LevelClaim> Set(string characterId, int depth, string levelHash);
+    Task<LevelClaim> Set(string characterId, int depth, string levelId);
     Task<IReadOnlyList<LevelClaim>> ForCharacter(string characterId);
     Task<IReadOnlyList<string>> CharactersWithClaims();
     Task Touch(string characterId);
-    /// <summary>Drops every claim of the character; returns the level hashes it held.</summary>
+    /// <summary>Drops every claim of the character; returns the level ids it held.</summary>
     Task<IReadOnlyList<string>> Drop(string characterId);
+    /// <summary>Claims on any copy of the level <paramref name="levelHash"/> (the pool's retire rule).</summary>
     Task<int> ClaimsOn(string levelHash);
+    /// <summary>Claims on the one level copy <paramref name="levelId"/>.</summary>
+    Task<int> ClaimsOnCopy(string levelId);
+}
+
+/// <summary>D-H16: teleporter anchors, one per character; a new one replaces the old.</summary>
+public interface IAnchorStore
+{
+    Task<AnchorRecord?> Get(string characterId);
+    Task<AnchorRecord> Set(AnchorRecord anchor);
+    /// <summary>False when the character had none.</summary>
+    Task<bool> Remove(string characterId);
+    Task<IReadOnlyList<AnchorRecord>> OnLevel(string levelId);
+    Task<IReadOnlyList<AnchorRecord>> For(IReadOnlyCollection<string> characterIds);
 }

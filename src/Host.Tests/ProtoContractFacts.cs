@@ -13,8 +13,14 @@ public class ProtoContractFacts
         "InstanceService.ExecResult", "InstanceService.Log",
         "CharacterService.List", "CharacterService.GetSheet",
         "ItemService.GetBackpack", "ItemService.GetStash", "ItemService.GetVendorStock", "ItemService.ListWorldItems",
-        "PartyService.Get", "LostAndFoundService.List",
+        "PartyService.Get", "LostAndFoundService.List", "TravelService.ListPartyAnchors",
+        "StoreService.Get", "StoreService.List",
     ];
+
+    // D-H17: store writes are idempotent by value (a put; a retried compare-and-set whose value is
+    // already stored answers as a success), so they keep no replay row in host.db and never wait
+    // on its writer.
+    static readonly HashSet<string> IdempotentByValue = ["StoreService.Set", "StoreService.Delete"];
 
     // Mutations that act on a character but hold no lease on it yet (the hub creates, deletes and leases).
     static readonly HashSet<string> NoLease =
@@ -28,13 +34,13 @@ public class ProtoContractFacts
     [Fact]
     public void The_game_api_has_its_services() =>
         Assert.Equal(
-            ["CharacterService", "InstanceService", "ItemService", "LostAndFoundService", "PartyService", "TradeService", "TravelService"],
+            ["CharacterService", "InstanceService", "ItemService", "LostAndFoundService", "PartyService", "StoreService", "TradeService", "TravelService"],
             GameReflection.Descriptor.Services.Select(s => s.Name).Order());
 
     [Fact]
     public void Every_mutating_game_request_carries_request_id()
     {
-        var mutating = GameMethods().Where(m => !NotMutating.Contains(m.Name)).ToList();
+        var mutating = GameMethods().Where(m => !NotMutating.Contains(m.Name) && !IdempotentByValue.Contains(m.Name)).ToList();
         Assert.True(mutating.Count > 30, $"only {mutating.Count} mutating methods seen");
         var missing = mutating.Where(m => m.Method.InputType.FindFieldByName("request_id") is null).Select(m => m.Name).ToList();
         Assert.Empty(missing);

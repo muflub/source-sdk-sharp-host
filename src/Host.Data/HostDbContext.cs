@@ -29,6 +29,7 @@ public sealed class HostDbContext(DbContextOptions<HostDbContext> options) : DbC
     internal DbSet<SettingRow> Settings => Set<SettingRow>();
     internal DbSet<RulesModuleRow> RulesModules => Set<RulesModuleRow>();
     internal DbSet<LevelClaimRow> LevelClaims => Set<LevelClaimRow>();
+    internal DbSet<AnchorRow> Anchors => Set<AnchorRow>();
 
     /// <summary>Unix milliseconds: SQLite can order and compare them, DateTimeOffset text it cannot.</summary>
     sealed class UnixMs() : ValueConverter<DateTimeOffset, long>(v => v.ToUnixTimeMilliseconds(), v => DateTimeOffset.FromUnixTimeMilliseconds(v));
@@ -89,7 +90,8 @@ public sealed class HostDbContext(DbContextOptions<HostDbContext> options) : DbC
         m.Entity<AuditRow>(e => { e.ToTable("audit_log"); e.HasKey(x => x.Id); e.HasIndex(x => x.At); e.HasIndex(x => x.Action); });
         m.Entity<SettingRow>(e => { e.ToTable("settings"); e.HasKey(x => x.Key); });
         m.Entity<RulesModuleRow>(e => { e.ToTable("rules_modules"); e.HasKey(x => x.Sha256); });
-        m.Entity<LevelClaimRow>(e => { e.ToTable("character_levels"); e.HasKey(x => new { x.CharacterId, x.Depth }); e.HasIndex(x => x.LevelHash); });
+        m.Entity<LevelClaimRow>(e => { e.ToTable("character_levels"); e.HasKey(x => new { x.CharacterId, x.Depth }); e.HasIndex(x => x.LevelId); });
+        m.Entity<AnchorRow>(e => { e.ToTable("anchors"); e.HasKey(x => x.CharacterId); e.HasIndex(x => x.LevelId); });
 
         // snake_case columns, as §4.1 names them.
         foreach (var entity in m.Model.GetEntityTypes())

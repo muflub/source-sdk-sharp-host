@@ -23,10 +23,11 @@ public sealed record MapReadyResult(MapReadyOutcome Outcome, InstanceRecord Inst
 public interface IInstanceLifecycle
 {
     /// <summary>
-    /// A level instance for (depth, party). With a level hash the row starts level_ready, else
+    /// A level instance for (depth, party). With a level id (D-H18: a copy; the original's is its
+    /// hash) the row starts level_ready running that copy, else
     /// requested until <see cref="AssignLevel"/>. Refused with a typed result at MaxLevelPods.
     /// </summary>
-    Task<LevelRequestResult> RequestLevel(int depth, string? partyId, string? levelHash, long? packVersion, CancellationToken ct = default);
+    Task<LevelRequestResult> RequestLevel(int depth, string? partyId, string? levelId, long? packVersion, CancellationToken ct = default);
 
     /// <summary>requested → level_ready: the pool handed this instance a level.</summary>
     Task<InstanceRecord> AssignLevel(string instanceId, string levelHash, long packVersion, CancellationToken ct = default);
@@ -86,6 +87,10 @@ public abstract record InstanceCommand
     public sealed record Exec(string Command) : InstanceCommand;
     /// <summary>The service ended a lease (expiry, admin, crash): the SDK raises LeaseLost.</summary>
     public sealed record LeaseRevoked(string CharacterId, string Reason) : InstanceCommand;
+    /// <summary>D-H16: a teleporter of this party was placed, moved or cleared; the hub lists them again.</summary>
+    public sealed record AnchorsChanged(string PartyId) : InstanceCommand;
+    /// <summary>D-H17: a store key this instance can read changed; no value, the server reads it.</summary>
+    public sealed record StoreChanged(StoreScope Scope, string Owner, string Key) : InstanceCommand;
 }
 
 public interface IInstanceCommands

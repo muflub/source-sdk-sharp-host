@@ -310,6 +310,76 @@ public sealed class FakeGameServer : IAsyncDisposable
             }
         }
         Note($"joined {p.SteamId} {ch.Id} on {Boot?.InstanceKind}");
+        if (!IsHub)
+        {
+            // D-H16: arriving through a teleporter, town left word in this level's store.
+            var key = $"arrival/{ch.Id}";
+            var arrival = await _sdk.Store.Level.Get(key);
+            if (arrival is { Ok: true, Value: { } a })
+            {
+                var taken = await _sdk.Store.Level.Delete(key, a.Version);
+                Note($"arrival {p.SteamId} {System.Text.Encoding.UTF8.GetString(a.Value)} {(taken.Ok ? "taken" : taken.Refusal!.Reason)}");
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ teleporters and the store (2.5.0)
+
+    public async Task<(bool Ok, string Reason)> PlaceAnchor(string steamId, float x, float y, float z)
+    {
+        var (p, reason) = Leased(steamId);
+        if (p is null) return (false, reason);
+        var r = await _sdk.Travel.PlaceAnchor(p.Lease!, new HostVec3(x, y, z), 0);
+        Note($"anchor {steamId} {(r.Ok ? r.Value.LevelId : Why(r.Refusal))}");
+        return r.Ok ? (true, "") : (false, Why(r.Refusal));
+    }
+
+    public async Task<(bool Ok, string Reason, IReadOnlyList<HostAnchor> Anchors)> Anchors(string steamId)
+    {
+        var (p, reason) = Leased(steamId);
+        if (p is null) return (false, reason, []);
+        var r = await _sdk.Travel.ListPartyAnchors(p.Lease!);
+        return r.Ok ? (true, "", r.Value) : (false, Why(r.Refusal), []);
+    }
+
+    /// <summary>The game's way through a pad: the arrival into the anchor's level store, then the trip.</summary>
+    public async Task<(bool Ok, string Reason, string State, string InstanceId)> ReturnToAnchor(string steamId, string owner)
+    {
+        var (p, reason) = Leased(steamId);
+        if (p is null) return (false, reason, "refused", "");
+        owner = owner.Length > 0 ? owner : p.Character!.Id;
+        var pads = await _sdk.Travel.ListPartyAnchors(p.Lease!);
+        if (!pads.Ok) return (false, Why(pads.Refusal), "refused", "");
+        if (pads.Value.FirstOrDefault(a => a.Owner == owner) is not { } pad) return (false, "no_anchor", "refused", "");
+        var word = await _sdk.Store.LevelCopy(pad.LevelId).Set($"arrival/{p.Character!.Id}", System.Text.Encoding.UTF8.GetBytes($"{owner} {pad.Position.X},{pad.Position.Y},{pad.Position.Z}"));
+        if (!word.Ok) return (false, Why(word.Refusal), "refused", "");
+        var r = await _sdk.Travel.ReturnToAnchor(p.Lease!, owner);
+        Note($"travel anchor {steamId} {owner} {(r.Ok ? $"{r.Value.State} {r.Value.InstanceId}" : Why(r.Refusal))}");
+        return r.Ok ? (true, r.Value.Reason, r.Value.State.ToString().ToLowerInvariant(), r.Value.InstanceId) : (false, Why(r.Refusal), "refused", "");
+    }
+
+    IStoreView? View(string scope, string steamId, string levelId) => scope switch
+    {
+        "level" => _sdk.Store.Level,
+        "instance" => _sdk.Store.Instance,
+        "town" => _sdk.Store.Town,
+        "levelcopy" => _sdk.Store.LevelCopy(levelId),
+        "character" when Leased(steamId).P is { } p => _sdk.Store.Character(p.Lease!),
+        _ => null,
+    };
+
+    public async Task<(bool Ok, string Reason, long Version)> StoreSet(string scope, string key, byte[] value, string steamId, string levelId)
+    {
+        if (View(scope, steamId, levelId) is not { } v) return (false, "bad_scope", 0);
+        var r = await v.Set(key, value);
+        return r.Ok ? (true, "", r.Value) : (false, Why(r.Refusal), 0);
+    }
+
+    public async Task<(bool Ok, string Reason, StoreEntry? Entry)> StoreGet(string scope, string key, string steamId, string levelId)
+    {
+        if (View(scope, steamId, levelId) is not { } v) return (false, "bad_scope", null);
+        var r = await v.Get(key);
+        return r.Ok ? (true, "", r.Value) : (false, Why(r.Refusal), null);
     }
 
     async Task Leave(Player p, string why)
@@ -361,6 +431,8 @@ public sealed class FakeGameServer : IAsyncDisposable
         // D-H14: the real game's client fetches the next map in the background; the fake notes it.
         c.NextLevel += n => { NextLevel = n; Note($"next_level {n.Depth} {n.Map} {n.MapUrl}"); };
         c.Shutdown += s => { Note($"shutdown {s.Reason}"); _ = Task.Run(() => StopAsync(0)); };
+        c.AnchorsChanged += a => Note($"anchors_changed {a.PartyId}");
+        c.StoreChanged += s => Note($"store_changed {s.Scope} {s.Owner} {s.Key}");
     }
 
     /// <summary>

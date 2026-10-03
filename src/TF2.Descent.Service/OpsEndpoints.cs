@@ -86,6 +86,14 @@ public static class OpsEndpoints
             catch (HostRefusal e) { return Results.Conflict(new { error = e.Reason, detail = e.Message }); }
         }).On(ListenerRole.Admin);
 
+        // A re-bake from source, as the Packs page's: a baker change (vrad options, the tools' build)
+        // leaves the library's version alone, so nothing else bakes the pool again.
+        ops.MapPost("/packs/{mod}/{library}/rebake", async (IAdminActions actions, string mod, string library, CancellationToken ct) =>
+        {
+            var r = await actions.RebakePack(mod, library, ct);
+            return r.Ok ? Results.Accepted(value: new { message = r.Message }) : Results.Conflict(new { error = r.Reason, detail = r.Message });
+        }).On(ListenerRole.Admin);
+
         // §5.4 on demand, report only (the cached sums are not fixed here): the soak's invariants.
         ops.MapPost("/reconcile", (IHostData data, IAdminLedger ledger, CancellationToken ct) =>
             data.WriteAsync((tx, _) => ledger.Reconcile(tx, fixCachedSums: false), ct)).On(ListenerRole.Admin);

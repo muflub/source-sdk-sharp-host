@@ -175,9 +175,10 @@ internal sealed class InstanceRow
     public DateTimeOffset? LastHeartbeat { get; set; }
     public int Players { get; set; }
     public int ExpectedPort { get; set; }
+    public string? LevelId { get; set; }
 
     public InstanceRecord ToRecord() => new(Id, Kind, State, Depth, PartyId, LevelHash, PodName, PodUid, PodIp, Port, TokenHash,
-        ModImage, ModImageDigest, RulesSha256, Seed, Created, Booted, LiveAt, DrainAt, ReapedAt, ExitCode, Reason, LastHeartbeat, Players, ExpectedPort);
+        ModImage, ModImageDigest, RulesSha256, Seed, Created, Booted, LiveAt, DrainAt, ReapedAt, ExitCode, Reason, LastHeartbeat, Players, ExpectedPort, LevelId);
 
     public static InstanceRow From(InstanceRecord r) => new InstanceRow { Id = r.Id }.Apply(r);
 
@@ -186,7 +187,7 @@ internal sealed class InstanceRow
         Kind = r.Kind; State = r.State; Depth = r.Depth; PartyId = r.PartyId; LevelHash = r.LevelHash; PodName = r.PodName; PodUid = r.PodUid;
         PodIp = r.PodIp; Port = r.Port; TokenHash = r.TokenHash; ModImage = r.ModImage; ModImageDigest = r.ModImageDigest; RulesSha256 = r.RulesSha256;
         Seed = r.Seed; Created = r.Created; Booted = r.Booted; LiveAt = r.LiveAt; DrainAt = r.DrainAt; ReapedAt = r.ReapedAt; ExitCode = r.ExitCode;
-        Reason = r.Reason; LastHeartbeat = r.LastHeartbeat; Players = r.Players; ExpectedPort = r.ExpectedPort;
+        Reason = r.Reason; LastHeartbeat = r.LastHeartbeat; Players = r.Players; ExpectedPort = r.ExpectedPort; LevelId = r.LevelId;
         return this;
     }
 }
@@ -334,8 +335,21 @@ internal sealed class LevelClaimRow
 {
     public string CharacterId { get; set; } = "";
     public int Depth { get; set; }
-    public string LevelHash { get; set; } = "";
+    public string LevelId { get; set; } = ""; // D-H18: a level copy id; the original's is its hash
     public DateTimeOffset Since { get; set; }
     public DateTimeOffset LastUsed { get; set; }
-    public LevelClaim ToRecord() => new(CharacterId, Depth, LevelHash, Since, LastUsed);
+    public LevelClaim ToRecord() => new(CharacterId, Depth, LevelId, Since, LastUsed);
+}
+
+internal sealed class AnchorRow
+{
+    public string CharacterId { get; set; } = "";
+    public string LevelId { get; set; } = "";
+    public int Depth { get; set; }
+    public float X { get; set; }
+    public float Y { get; set; }
+    public float Z { get; set; }
+    public float Yaw { get; set; }
+    public DateTimeOffset Placed { get; set; }
+    public AnchorRecord ToRecord() => new(CharacterId, LevelId, Depth, X, Y, Z, Yaw, Placed);
 }

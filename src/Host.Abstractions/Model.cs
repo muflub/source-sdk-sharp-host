@@ -56,9 +56,12 @@ public sealed record InstanceRecord(
     string? PodName, string? PodUid, string? PodIp, int Port, string TokenHash,
     string? ModImage, string? ModImageDigest, string? RulesSha256, ulong Seed,
     DateTimeOffset Created, DateTimeOffset? Booted, DateTimeOffset? LiveAt, DateTimeOffset? DrainAt, DateTimeOffset? ReapedAt,
-    int? ExitCode, string? Reason, DateTimeOffset? LastHeartbeat, int Players, int ExpectedPort)
+    int? ExitCode, string? Reason, DateTimeOffset? LastHeartbeat, int Players, int ExpectedPort, string? LevelId = null)
 {
     public bool Terminal => State is InstanceState.Reaped or InstanceState.Crashed or InstanceState.Failed;
+
+    /// <summary>D-H18: the level copy this instance runs; rows from before copies existed run the original.</summary>
+    public string? LevelCopy => LevelId ?? LevelHash;
 }
 
 public sealed record SessionRecord(
@@ -102,5 +105,30 @@ public sealed record RulesModuleRecord(
 
 public sealed record Setting(string Key, string ValueJson, string UpdatedBy, DateTimeOffset UpdatedAt);
 
-/// <summary>D-H12: a character's sticky level for a depth, for its session.</summary>
-public sealed record LevelClaim(string CharacterId, int Depth, string LevelHash, DateTimeOffset Since, DateTimeOffset LastUsed);
+/// <summary>D-H12: a character's sticky level for a depth, for its session; D-H18: a level copy (<see cref="LevelIds"/>).</summary>
+public sealed record LevelClaim(string CharacterId, int Depth, string LevelId, DateTimeOffset Since, DateTimeOffset LastUsed)
+{
+    public string LevelHash => LevelIds.HashOf(LevelId);
+}
+
+/// <summary>D-H16: a character's teleporter entrance, on the level copy it was placed on (one per character).</summary>
+public sealed record AnchorRecord(string CharacterId, string LevelId, int Depth, float X, float Y, float Z, float Yaw, DateTimeOffset Placed)
+{
+    public string LevelHash => LevelIds.HashOf(LevelId);
+}
+
+/// <summary>
+/// D-H18: a level copy's id. The original copy of a level is its map hash; a fork is
+/// "&lt;hash&gt;~&lt;ulid&gt;", sharing the map, seed and files and keeping its own claims, anchors and
+/// LEVEL store data.
+/// </summary>
+public static class LevelIds
+{
+    public const char Separator = '~';
+
+    public static string HashOf(string levelId) => levelId.IndexOf(Separator) is var i and >= 0 ? levelId[..i] : levelId;
+
+    public static string Fork(string levelId, TimeProvider clock) => Fork(levelId, clock.GetUtcNow());
+
+    public static string Fork(string levelId, DateTimeOffset at) => $"{HashOf(levelId)}{Separator}{Ulid.New(at)}";
+}

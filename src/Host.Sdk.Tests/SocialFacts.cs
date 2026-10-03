@@ -159,7 +159,9 @@ public class SocialFacts
         var (hub, a, _) = await TwoOnTheHub(h);
         Assert.True((await hub.Pumped(hub.Travel.TownPortal(a))).Ok);
         Assert.True((await hub.Pumped(hub.Travel.ReturnThroughPortal(a))).Ok);
+#pragma warning disable CS0618 // deprecated in 2.5.0 (D-H16) but still served until the next major: keep proving it
         Assert.True((await hub.Pumped(hub.Travel.ReturnToCorpse(a))).Ok);
+#pragma warning restore CS0618
         Assert.Equal(["TownPortal", "ReturnThroughPortal", "ReturnToCorpse"], h.TravelApi.Calls.Select(c => c.Method));
     }
 

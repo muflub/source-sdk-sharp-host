@@ -52,6 +52,8 @@ message ServerCommand {
     LeaseRevoked lease_revoked = 17;
     HeartbeatAck heartbeat_ack = 18;
     NextLevel next_level = 19;
+    AnchorsChanged anchors_changed = 20;
+    StoreChanged store_changed = 21;
   }
 }
 
@@ -69,6 +71,12 @@ message Say { string text = 1; }
 // download_url is empty when the service has no public fastdl.
 // map_sha256: SHA-256 of the unpacked <map>.bsp (what the bz2 decompresses to), empty when unknown.
 message NextLevel { int32 depth = 1; string map = 2; string download_url = 3; bytes map_sha256 = 4; }
+// D-H16: an anchor of this party was placed, moved or cleared; sent to hubs holding a lease of the
+// party. It carries no anchors: the hub calls TravelService.ListPartyAnchors again.
+message AnchorsChanged { string party_id = 1; }
+// D-H17: a store key this server can read changed (TOWN, or this level's data written by a hub).
+// No value: the server calls StoreService.Get. owner is the level id, or "town".
+message StoreChanged { StoreScope scope = 1; string owner = 2; string key = 3; }
 message Exec { string command = 1; }
 message LeaseRevoked { string character_id = 1; string reason = 2; }
 message HeartbeatAck { uint64 seq = 1; }
@@ -116,6 +124,7 @@ message BootingResponse {
   string instance_kind = 3;    // "hub" | "level"
   int32 depth = 4;
   string level_hash = 5;
+  string level_id = 6;         // D-H18: the level copy this instance runs (the hash itself for the original)
 }
 
 message ModuleChunk {
@@ -138,6 +147,8 @@ message MapReadyRequest {
 
 message MapReadyResponse {
   int32 expected_port = 1;
+  // D-H16: every teleporter placed on this level copy, so a fresh instance rebuilds them.
+  repeated Anchor anchors = 2;
 }
 
 message PlayerJoinedRequest {
@@ -486,7 +497,42 @@ service TravelService {
   rpc StairsDown(TravelRequest) returns (TravelResponse);
   rpc TownPortal(TravelRequest) returns (TravelResponse);
   rpc ReturnThroughPortal(TravelRequest) returns (TravelResponse);
+  // Deprecated (D-H16, 2026-10-03): the way back is a teleporter or the stairs. Removed at the next major.
   rpc ReturnToCorpse(TravelRequest) returns (TravelResponse);
+  // D-H16: one teleporter entrance per character, on the level copy the caller stands on.
+  rpc PlaceAnchor(PlaceAnchorRequest) returns (Anchor);
+  rpc ClearAnchor(TravelRequest) returns (Ack);
+  // Hub only: the anchors of the caller's party (the caller's own when not in one).
+  rpc ListPartyAnchors(TravelRequest) returns (AnchorList);
+  // Hub only: the caller alone, to anchor_owner's anchor (the caller or a party member).
+  rpc ReturnToAnchor(ReturnToAnchorRequest) returns (TravelResponse);
+}
+
+message Anchor {
+  string owner = 1;            // the character who placed it
+  string level_id = 2;         // D-H18: the level copy it stands on
+  string level_hash = 3;
+  int32 depth = 4;
+  Vec3 position = 5;
+  float yaw = 6;
+  int64 placed_unix_ms = 7;
+}
+
+message AnchorList { repeated Anchor anchors = 1; }
+
+message PlaceAnchorRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  Vec3 position = 4;
+  float yaw = 5;
+}
+
+message ReturnToAnchorRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string anchor_owner = 4;
 }
 
 message TravelRequest {
@@ -510,3 +556,50 @@ message TravelResponse {
   int64 eta_ms = 3;
   string reason = 4;
 }
+
+// ---------------------------------------------------------------- store (D-H17)
+
+// Bytes the host never reads, kept in store.db. A server reaches its own INSTANCE and LEVEL data,
+// a CHARACTER's while it holds the lease, and TOWN; a hub may also name a claimed level's LEVEL
+// data by level_id. Writes carry no request_id: Set is a put, a retried compare-and-set whose
+// value is already stored answers as a success, and a retried Delete finds nothing and answers
+// deleted = false. Versions come from one counter that never repeats.
+service StoreService {
+  rpc Get(StoreGetRequest) returns (StoreGetResponse);
+  rpc Set(StoreSetRequest) returns (StoreSetResponse);
+  rpc Delete(StoreDeleteRequest) returns (StoreDeleteResponse);
+  rpc List(StoreListRequest) returns (StoreListResponse);
+}
+
+enum StoreScope {
+  STORE_SCOPE_UNSPECIFIED = 0;
+  STORE_SCOPE_LEVEL = 1;       // the level copy (D-H18): a fresh instance of it reads the same data
+  STORE_SCOPE_INSTANCE = 2;    // this instance: survives its game server restarting
+  STORE_SCOPE_CHARACTER = 3;   // follows the character; needs its lease on the caller
+  STORE_SCOPE_TOWN = 4;        // one shared owner for every hub and level
+}
+
+message StoreRef {
+  StoreScope scope = 1;
+  string level_id = 2;         // LEVEL from a hub: which level copy; empty = the caller's own
+  string character_id = 3;     // CHARACTER
+  bytes lease_token = 4;       // CHARACTER
+}
+
+message StoreGetRequest { StoreRef ref = 1; string key = 2; }
+message StoreGetResponse { bool found = 1; bytes value = 2; int64 version = 3; }
+
+message StoreSetRequest {
+  StoreRef ref = 1;
+  string key = 2;
+  bytes value = 3;
+  optional int64 expected_version = 4; // absent: unconditional; 0: create only; else compare-and-set
+}
+message StoreSetResponse { int64 version = 1; }
+
+message StoreDeleteRequest { StoreRef ref = 1; string key = 2; optional int64 expected_version = 3; }
+message StoreDeleteResponse { bool deleted = 1; }
+
+message StoreListRequest { StoreRef ref = 1; string prefix = 2; string page_token = 3; int32 page_size = 4; }
+message StoreKey { string key = 1; int64 version = 2; int32 size = 3; }
+message StoreListResponse { repeated StoreKey keys = 1; string next_page_token = 2; }

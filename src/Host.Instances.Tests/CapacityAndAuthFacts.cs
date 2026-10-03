@@ -19,6 +19,14 @@ public class CapacityAndAuthFacts
     }
 
     [Fact]
+    public async Task A_level_requested_as_a_copy_runs_that_copy_of_its_hash()
+    {
+        await using var h = new ManagerHarness();
+        var r = (LevelRequestResult.Accepted)await h.M.RequestLevel(3, null, "h3~COPY", 1);
+        Assert.Equal(("h3", "h3~COPY"), (r.Instance.LevelHash, r.Instance.LevelId)); // the map is the hash's (D-H18)
+    }
+
+    [Fact]
     public async Task Capacity_frees_when_a_level_is_reaped()
     {
         await using var h = new ManagerHarness(o => o.Instances.MaxLevelPods = 1);

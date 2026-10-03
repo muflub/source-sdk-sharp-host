@@ -19,7 +19,9 @@ public sealed class FakeGameControlService(FakeGameServer game) : Control.FakeGa
         if (game.Boot is { } b)
         {
             s.Kind = b.InstanceKind; s.Depth = b.Depth; s.LevelHash = b.LevelHash; s.InstanceSeed = b.InstanceSeed; s.ModuleUploaded = b.Uploaded;
+            s.LevelId = b.LevelId;
         }
+        s.LevelAnchors.AddRange(game.Sdk.Session.LevelAnchors.Select(a => a.Owner));
         s.Players.AddRange(game.Players);
         s.Events.AddRange(game.Events);
         return Task.FromResult(s);
@@ -70,6 +72,33 @@ public sealed class FakeGameControlService(FakeGameServer game) : Control.FakeGa
     public override Task<TravelReply> Descend(TravelRequest request, ServerCallContext context) => Go(FakeGameServer.Trip.Descend, request);
     public override Task<TravelReply> TownPortal(TravelRequest request, ServerCallContext context) => Go(FakeGameServer.Trip.TownPortal, request);
     public override Task<TravelReply> ReturnThroughPortal(TravelRequest request, ServerCallContext context) => Go(FakeGameServer.Trip.ReturnThroughPortal, request);
+
+    public override Task<Reply> PlaceAnchor(AnchorRequest request, ServerCallContext context) =>
+        game.OnMain(async () => R(await game.PlaceAnchor(request.Steamid, request.X, request.Y, request.Z)));
+
+    public override Task<AnchorsReply> Anchors(PlayerRequest request, ServerCallContext context) => game.OnMain(async () =>
+    {
+        var (ok, reason, anchors) = await game.Anchors(request.Steamid);
+        return new AnchorsReply { Ok = ok, Reason = reason, Owners = { anchors.Select(a => a.Owner) }, LevelIds = { anchors.Select(a => a.LevelId) } };
+    });
+
+    public override Task<TravelReply> ReturnToAnchor(AnchorRequest request, ServerCallContext context) => game.OnMain(async () =>
+    {
+        var (ok, reason, state, instance) = await game.ReturnToAnchor(request.Steamid, request.Owner);
+        return new TravelReply { Ok = ok, Reason = reason, State = state, InstanceId = instance };
+    });
+
+    public override Task<StoreReply> StoreSet(StoreRequest request, ServerCallContext context) => game.OnMain(async () =>
+    {
+        var (ok, reason, version) = await game.StoreSet(request.Scope, request.Key, request.Value.ToByteArray(), request.Steamid, request.LevelId);
+        return new StoreReply { Ok = ok, Reason = reason, Version = version };
+    });
+
+    public override Task<StoreReply> StoreGet(StoreRequest request, ServerCallContext context) => game.OnMain(async () =>
+    {
+        var (ok, reason, entry) = await game.StoreGet(request.Scope, request.Key, request.Steamid, request.LevelId);
+        return new StoreReply { Ok = ok, Reason = reason, Found = entry is not null, Value = Google.Protobuf.ByteString.CopyFrom(entry?.Value ?? []), Version = entry?.Version ?? 0 };
+    });
 
     public override Task<Reply> Crash(CrashRequest request, ServerCallContext context)
     {

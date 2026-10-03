@@ -563,12 +563,12 @@ internal sealed class LevelClaimStore(Ctx c) : ILevelClaimStore
     public async Task<LevelClaim?> Get(string characterId, int depth) =>
         (await c.Db.LevelClaims.AsNoTracking().FirstOrDefaultAsync(x => x.CharacterId == characterId && x.Depth == depth))?.ToRecord();
 
-    public async Task<LevelClaim> Set(string characterId, int depth, string levelHash)
+    public async Task<LevelClaim> Set(string characterId, int depth, string levelId)
     {
         c.Writable();
         var row = await c.Db.LevelClaims.FirstOrDefaultAsync(x => x.CharacterId == characterId && x.Depth == depth);
         if (row is null) { row = new LevelClaimRow { CharacterId = characterId, Depth = depth, Since = c.Now }; c.Db.LevelClaims.Add(row); }
-        if (row.LevelHash != levelHash) { row.LevelHash = levelHash; row.Since = c.Now; }
+        if (row.LevelId != levelId) { row.LevelId = levelId; row.Since = c.Now; }
         row.LastUsed = c.Now;
         await c.Save();
         return row.ToRecord();
@@ -590,10 +590,44 @@ internal sealed class LevelClaimStore(Ctx c) : ILevelClaimStore
     public async Task<IReadOnlyList<string>> Drop(string characterId)
     {
         c.Writable();
-        var hashes = await c.Db.LevelClaims.AsNoTracking().Where(x => x.CharacterId == characterId).Select(x => x.LevelHash).ToListAsync();
+        var ids = await c.Db.LevelClaims.AsNoTracking().Where(x => x.CharacterId == characterId).Select(x => x.LevelId).ToListAsync();
         await c.Db.LevelClaims.Where(x => x.CharacterId == characterId).ExecuteDeleteAsync();
-        return hashes.Distinct().ToList();
+        return ids.Distinct().ToList();
     }
 
-    public Task<int> ClaimsOn(string levelHash) => c.Db.LevelClaims.CountAsync(x => x.LevelHash == levelHash);
+    public Task<int> ClaimsOn(string levelHash)
+    {
+        var fork = levelHash + LevelIds.Separator;
+        return c.Db.LevelClaims.CountAsync(x => x.LevelId == levelHash || x.LevelId.StartsWith(fork));
+    }
+
+    public Task<int> ClaimsOnCopy(string levelId) => c.Db.LevelClaims.CountAsync(x => x.LevelId == levelId);
+}
+
+internal sealed class AnchorStore(Ctx c) : IAnchorStore
+{
+    public async Task<AnchorRecord?> Get(string characterId) =>
+        (await c.Db.Anchors.AsNoTracking().FirstOrDefaultAsync(x => x.CharacterId == characterId))?.ToRecord();
+
+    public async Task<AnchorRecord> Set(AnchorRecord anchor)
+    {
+        c.Writable();
+        var row = await c.Db.Anchors.FirstOrDefaultAsync(x => x.CharacterId == anchor.CharacterId);
+        if (row is null) { row = new AnchorRow { CharacterId = anchor.CharacterId }; c.Db.Anchors.Add(row); }
+        row.LevelId = anchor.LevelId; row.Depth = anchor.Depth; row.X = anchor.X; row.Y = anchor.Y; row.Z = anchor.Z; row.Yaw = anchor.Yaw; row.Placed = anchor.Placed;
+        await c.Save();
+        return row.ToRecord();
+    }
+
+    public async Task<bool> Remove(string characterId)
+    {
+        c.Writable();
+        return await c.Db.Anchors.Where(x => x.CharacterId == characterId).ExecuteDeleteAsync() > 0;
+    }
+
+    public async Task<IReadOnlyList<AnchorRecord>> OnLevel(string levelId) =>
+        (await c.Db.Anchors.AsNoTracking().Where(x => x.LevelId == levelId).ToListAsync()).OrderBy(x => x.Placed).Select(x => x.ToRecord()).ToList();
+
+    public async Task<IReadOnlyList<AnchorRecord>> For(IReadOnlyCollection<string> characterIds) =>
+        (await c.Db.Anchors.AsNoTracking().Where(x => characterIds.Contains(x.CharacterId)).ToListAsync()).OrderBy(x => x.Placed).Select(x => x.ToRecord()).ToList();
 }

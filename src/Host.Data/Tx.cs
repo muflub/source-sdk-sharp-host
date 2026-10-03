@@ -10,7 +10,7 @@ internal sealed class Tx(HostDbContext db, TimeProvider clock, string actor, boo
 
     ICharacterStore? _characters; ILeaseStore? _leases; IItemLedger? _items; ILostAndFoundStore? _lf; IPartyStore? _parties;
     ITradeStore? _trades; IInstanceStore? _instances; ISessionStore? _sessions; ILibraryStore? _library; ILevelStore? _levels;
-    IMapJobStore? _jobs; IVendorStore? _vendors; IAuditLog? _audit; ISettingsStore? _settings; IRulesModuleStore? _modules; ILevelClaimStore? _claims;
+    IMapJobStore? _jobs; IVendorStore? _vendors; IAuditLog? _audit; ISettingsStore? _settings; IRulesModuleStore? _modules; ILevelClaimStore? _claims; IAnchorStore? _anchors;
 
     public ICharacterStore Characters => _characters ??= new CharacterStore(_c);
     public ILeaseStore Leases => _leases ??= new LeaseStore(_c);
@@ -28,6 +28,7 @@ internal sealed class Tx(HostDbContext db, TimeProvider clock, string actor, boo
     public ISettingsStore Settings => _settings ??= new SettingsStore(_c);
     public IRulesModuleStore Modules => _modules ??= new RulesModuleStore(_c);
     public ILevelClaimStore LevelClaims => _claims ??= new LevelClaimStore(_c);
+    public IAnchorStore Anchors => _anchors ??= new AnchorStore(_c);
     public DateTimeOffset Now => _c.Now;
     public string Actor => _c.Actor;
 }

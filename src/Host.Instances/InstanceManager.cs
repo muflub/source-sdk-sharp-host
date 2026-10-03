@@ -497,7 +497,7 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
 
     // ================================================================== IInstanceLifecycle
 
-    public async Task<LevelRequestResult> RequestLevel(int depth, string? partyId, string? levelHash, long? packVersion, CancellationToken ct = default)
+    public async Task<LevelRequestResult> RequestLevel(int depth, string? partyId, string? levelId, long? packVersion, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
@@ -509,11 +509,12 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
                     InstanceState.Requested, InstanceState.LevelReady, InstanceState.Creating, InstanceState.Booting,
                     InstanceState.Live, InstanceState.Suspect, InstanceState.Draining);
                 if (running >= max) return new LevelRequestResult.AtCapacity(running, max);
-                var state = levelHash is null ? InstanceState.Requested : InstanceState.LevelReady;
-                var row = await tx.Instances.Add(NewRow(InstanceKind.Level, state, depth, partyId, levelHash));
-                await tx.Audit.Write(InstanceTransitions.Action(InstanceState.Requested), row.Id, null, new { depth, partyId, levelHash, packVersion }, Actor);
+                var state = levelId is null ? InstanceState.Requested : InstanceState.LevelReady;
+                var levelHash = levelId is null ? null : LevelIds.HashOf(levelId);
+                var row = await tx.Instances.Add(NewRow(InstanceKind.Level, state, depth, partyId, levelHash) with { LevelId = levelId });
+                await tx.Audit.Write(InstanceTransitions.Action(InstanceState.Requested), row.Id, null, new { depth, partyId, levelHash, levelId, packVersion }, Actor);
                 if (state == InstanceState.LevelReady)
-                    await tx.Audit.Write(InstanceTransitions.Action(InstanceState.LevelReady), row.Id, new { state = "Requested" }, new { state = "LevelReady", detail = new { levelHash, packVersion } }, Actor);
+                    await tx.Audit.Write(InstanceTransitions.Action(InstanceState.LevelReady), row.Id, new { state = "Requested" }, new { state = "LevelReady", detail = new { levelHash, levelId, packVersion } }, Actor);
                 return new LevelRequestResult.Accepted(row);
             }, ct);
         }
@@ -528,7 +529,7 @@ public sealed class InstanceManager : BackgroundService, IInstanceLifecycle
             var row = await Row(instanceId, ct);
             if (row.State != InstanceState.Requested || row.Kind != InstanceKind.Level)
                 throw HostRefusal.Precondition("not_requested", $"instance {instanceId} is {row.State}");
-            return await Transition(instanceId, InstanceState.LevelReady, r => r with { LevelHash = levelHash }, new { levelHash, packVersion }, Actor, ct);
+            return await Transition(instanceId, InstanceState.LevelReady, r => r with { LevelHash = levelHash, LevelId = levelHash }, new { levelHash, packVersion }, Actor, ct);
         }
         finally { _lock.Release(); }
     }

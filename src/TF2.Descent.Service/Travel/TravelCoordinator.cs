@@ -16,6 +16,9 @@ public enum TravelKind { Descend, StairsDown, TownPortal, ReturnThroughPortal, R
 public interface ITripPlanner
 {
     Task<P.TravelResponse> Go(InstanceRecord caller, string characterId, byte[] token, string? partyId, int depth, TravelKind kind, string requestId, CancellationToken ct);
+
+    /// <summary>D-H16: from the hub, the caller alone, to <paramref name="anchorOwner"/>'s teleporter (the caller or a party member).</summary>
+    Task<P.TravelResponse> ToAnchor(InstanceRecord caller, string characterId, byte[] token, string anchorOwner, string requestId, CancellationToken ct);
 }
 
 /// <summary>
@@ -99,7 +102,7 @@ public sealed class TravelCoordinator(
                     throw HostRefusal.Precondition("no_corpse_level", $"{characterId} has no level it died on");
                 depth = dv.GetInt32();
                 await tx.LevelClaims.Set(characterId, depth, died);
-                var at = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelHash == died && i.State is not InstanceState.Draining);
+                var at = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelCopy == died && i.State is not InstanceState.Draining);
                 return (Target: at, Hash: (string?)died, Members: members.Where(m => m.CharacterId == characterId).ToList());
             }
             if (depth < 1 || depth > options.MapPool.Depths)
@@ -108,12 +111,38 @@ public sealed class TravelCoordinator(
                 throw HostRefusal.Precondition("depth_locked", $"{characterId} has reached depth {leader.ReachedDepth}");
             var claim = await tx.LevelClaims.Get(characterId, depth);
             if (claim is null) return (Target: null, Hash: null, Members: members);
-            foreach (var m in members) await tx.LevelClaims.Set(m.CharacterId, depth, claim.LevelHash);
-            var running = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelHash == claim.LevelHash && i.State is not InstanceState.Draining);
-            return (Target: running, Hash: claim.LevelHash, Members: members);
+            foreach (var m in members) await tx.LevelClaims.Set(m.CharacterId, depth, claim.LevelId);
+            var running = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelCopy == claim.LevelId && i.State is not InstanceState.Draining);
+            return (Target: running, Hash: claim.LevelId, Members: members);
         }, ct);
 
         if (plan.Members.Count == 0) throw HostRefusal.Precondition("not_in_party", "nobody to move");
+        return await Arrive(plan.Target, depth, partyId, plan.Hash, plan.Members, ct);
+    }
+
+    public async Task<P.TravelResponse> ToAnchor(InstanceRecord caller, string characterId, byte[] token, string anchorOwner, string requestId, CancellationToken ct)
+    {
+        var plan = await data.WriteAsync(async (tx, _) =>
+        {
+            DescentLedger.RequireHub(caller);
+            var (ch, _) = await DescentLedger.Leased(tx, caller, characterId, token);
+            var party = await tx.Parties.ForCharacter(characterId);
+            if (anchorOwner != characterId && party?.Members.Contains(anchorOwner) != true)
+                throw HostRefusal.Denied("not_in_party", $"{anchorOwner} is not in {characterId}'s party");
+            var anchor = await tx.Anchors.Get(anchorOwner) ?? throw HostRefusal.NotFound("no_anchor", $"{anchorOwner} has placed no teleporter");
+            // Through the teleporter, its level copy becomes the caller's level for that depth (D-H12).
+            await tx.LevelClaims.Set(characterId, anchor.Depth, anchor.LevelId);
+            await tx.Audit.Write("travel.to_anchor", characterId, null, new { owner = anchorOwner, level = anchor.LevelId, depth = anchor.Depth });
+            var at = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelCopy == anchor.LevelId && i.State is not InstanceState.Draining);
+            return (Target: at, anchor.Depth, Hash: anchor.LevelId, Party: party?.Id, Member: new Member(characterId, ch.Account, caller.Id));
+        }, ct);
+        return await Arrive(plan.Target, plan.Depth, plan.Party, plan.Hash, [plan.Member], ct);
+    }
+
+    /// <summary>2 and 3 of a trip: the target instance (running, or requested for the level copy, or for a hand-out), then the hops.</summary>
+    async Task<P.TravelResponse> Arrive(InstanceRecord? running, int depth, string? partyId, string? hash, IReadOnlyList<Member> members, CancellationToken ct)
+    {
+        var plan = (Target: running, Hash: hash, Members: members);
 
         // 2. The target instance.
         InstanceRecord target;
@@ -267,9 +296,9 @@ public sealed class TravelCoordinator(
             var party = await tx.Parties.ForCharacter(leader.CharacterId);
             var claim = await tx.LevelClaims.Get(leader.CharacterId, depth);
             if (claim is null) return (Hash: (string?)null, Running: (InstanceRecord?)null, Party: party?.Id);
-            foreach (var m in members) await tx.LevelClaims.Set(m.CharacterId, depth, claim.LevelHash);
-            var running = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelHash == claim.LevelHash && i.State is not InstanceState.Draining);
-            return (Hash: claim.LevelHash, Running: running, Party: party?.Id);
+            foreach (var m in members) await tx.LevelClaims.Set(m.CharacterId, depth, claim.LevelId);
+            var running = (await tx.Instances.NonTerminal()).FirstOrDefault(i => i.LevelCopy == claim.LevelId && i.State is not InstanceState.Draining);
+            return (Hash: claim.LevelId, Running: running, Party: party?.Id);
         }, ct);
         if (plan.Running is { } warm) { await LinkPrewarm(warm.Id, current, ct); await TellNextLevel(current.Id, warm.Id, ct); return; }
 
@@ -389,7 +418,7 @@ public sealed class TravelCoordinator(
 }
 
 /// <summary>The trips waiting for a level retry on a tick; D-H12 sessions end after the idle time.</summary>
-public sealed class TravelWorker(TravelCoordinator travel, IHostData data, IMapPool pool, ServiceOptions options, TimeProvider clock, ILogger<TravelWorker> log) : BackgroundService
+public sealed class TravelWorker(TravelCoordinator travel, IHostData data, IMapPool pool, ServiceOptions options, TimeProvider clock, ILogger<TravelWorker> log, Anchors? anchors = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -413,24 +442,40 @@ public sealed class TravelWorker(TravelCoordinator travel, IHostData data, IMapP
     /// </summary>
     public async Task<int> EndIdleSessions(CancellationToken ct)
     {
-        var retire = await data.WriteAsync(async (tx, _) =>
+        var (retire, unanchored) = await data.WriteAsync(async (tx, _) =>
         {
             var free = new List<string>();
+            var lost = new List<string>();
             var now = tx.Now;
             foreach (var ch in await tx.LevelClaims.CharactersWithClaims())
             {
                 if (await tx.Leases.Get(ch) is not null) { await tx.LevelClaims.Touch(ch); continue; }
                 var claims = await tx.LevelClaims.ForCharacter(ch);
                 if (claims.Count == 0 || now - claims.Max(c => c.LastUsed) < options.Travel.SessionIdle) continue;
-                var hashes = await tx.LevelClaims.Drop(ch);
-                await tx.Audit.Write("session.end", ch, null, new { levels = hashes });
+                var ids = await tx.LevelClaims.Drop(ch);
+                await tx.Audit.Write("session.end", ch, null, new { levels = ids });
+                // D-H18: a level's files are shared by its copies; retired only when no copy is claimed or running.
                 var running = (await tx.Instances.NonTerminal()).Select(i => i.LevelHash).ToHashSet();
-                foreach (var h in hashes)
+                foreach (var h in ids.Select(LevelIds.HashOf).Distinct())
                     if (await tx.LevelClaims.ClaimsOn(h) == 0 && !running.Contains(h)) free.Add(h);
+                // D-H16: a teleporter lives as long as its level copy is someone's level; D-H18: so
+                // does a corpse waiting for a fork's first instance.
+                foreach (var id in ids)
+                    if (await tx.LevelClaims.ClaimsOnCopy(id) == 0)
+                    {
+                        await LevelForks.EndPending(tx, id);
+                        foreach (var a in await tx.Anchors.OnLevel(id))
+                        {
+                            await tx.Anchors.Remove(a.CharacterId);
+                            await tx.Audit.Write(Anchors.ClearedAction, a.CharacterId, new { level = a.LevelId, depth = a.Depth }, new { reason = "level_unclaimed" });
+                            lost.Add(a.CharacterId);
+                        }
+                    }
             }
-            return free;
+            return (free, lost);
         }, ct);
         foreach (var hash in retire) await pool.RetireLevelAsync(hash, ct);
+        if (anchors is not null) foreach (var owner in unanchored) await anchors.Notify(owner, ct);
         return retire.Count;
     }
 }

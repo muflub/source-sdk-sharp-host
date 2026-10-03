@@ -20,7 +20,7 @@ public sealed class CharacterApi(IHostData data, DescentLedger ledger) : P.Chara
                 // Anything else stays the hub's; with none, the refusal is the hub-only one.
                 var here = new List<CharacterRecord>();
                 foreach (var c in all)
-                    if (caller.LevelHash is { } hash && (await tx.LevelClaims.Get(c.Id, caller.Depth))?.LevelHash == hash) here.Add(c);
+                    if (caller.LevelCopy is { } level && (await tx.LevelClaims.Get(c.Id, caller.Depth))?.LevelId == level) here.Add(c);
                 if (here.Count == 0) DescentLedger.RequireHub(caller);
                 all = here;
             }

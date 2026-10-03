@@ -28,6 +28,14 @@ service FakeGameControl {
   rpc ReturnThroughPortal(TravelRequest) returns (TravelReply);
   rpc Reclaim(ItemRequest) returns (ItemsReply);
   rpc LostAndFound(PlayerRequest) returns (ItemsReply);
+  // D-H16: a teleporter where the player stands (a level), town's pads, and the way through: town
+  // writes the arrival into the anchor's level store first, the level reads it at join.
+  rpc PlaceAnchor(AnchorRequest) returns (Reply);
+  rpc Anchors(PlayerRequest) returns (AnchorsReply);
+  rpc ReturnToAnchor(AnchorRequest) returns (TravelReply);
+  // D-H17: the store, as game code would use it.
+  rpc StoreSet(StoreRequest) returns (StoreReply);
+  rpc StoreGet(StoreRequest) returns (StoreReply);
   // Faults: exit with a code, stop the main loop (the SDK then stops heartbeating), answer slowly.
   rpc Crash(CrashRequest) returns (Reply);
   rpc Hang(Empty) returns (Reply);
@@ -55,6 +63,8 @@ message StatusReply {
   repeated string events = 11;  // commands and notable steps, in order ("prepare_hop 7656 lvl-2", "hop_ready ...")
   bool draining = 12;
   bool connected = 13;
+  string level_id = 14;        // D-H18: the level copy, once booted
+  repeated string level_anchors = 15; // owners of the teleporters MapReady handed over
 }
 
 message JoinRequest {
@@ -124,3 +134,34 @@ message TravelReply {
 
 message CrashRequest { int32 exit_code = 1; }
 message SlowRequest { int32 ms = 1; }
+
+message AnchorRequest {
+  string steamid = 1;
+  float x = 2;
+  float y = 3;
+  float z = 4;
+  string owner = 5;            // ReturnToAnchor: whose teleporter (a character id; empty = the caller's)
+}
+
+message AnchorsReply {
+  bool ok = 1;
+  string reason = 2;
+  repeated string owners = 3;
+  repeated string level_ids = 4;
+}
+
+message StoreRequest {
+  string scope = 1;            // "level" | "instance" | "town" | "character" | "levelcopy"
+  string key = 2;
+  bytes value = 3;
+  string steamid = 4;          // character
+  string level_id = 5;         // levelcopy
+}
+
+message StoreReply {
+  bool ok = 1;
+  string reason = 2;
+  bool found = 3;
+  bytes value = 4;
+  int64 version = 5;
+}

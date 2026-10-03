@@ -27,7 +27,13 @@ public sealed record HostCharacter(
 public enum ModuleAnswer { Unspecified, Known, Send, Pending }
 
 /// <summary>What Booting told this instance: the handshake's answer and the seed KillRoll replays from.</summary>
-public sealed record BootInfo(ModuleAnswer Module, ulong InstanceSeed, string InstanceKind, int Depth, string LevelHash, bool Uploaded);
+/// <summary><paramref name="LevelId"/> (D-H18): the level copy this instance runs; its LEVEL store data and teleporters are keyed by it.</summary>
+public sealed record BootInfo(ModuleAnswer Module, ulong InstanceSeed, string InstanceKind, int Depth, string LevelHash, bool Uploaded, string LevelId = "");
+
+public readonly record struct HostVec3(float X, float Y, float Z);
+
+/// <summary>D-H16: a teleporter entrance, placed by <paramref name="Owner"/> on level copy <paramref name="LevelId"/>.</summary>
+public sealed record HostAnchor(string Owner, string LevelId, string LevelHash, int Depth, HostVec3 Position, float Yaw, DateTimeOffset Placed);
 
 /// <summary>PlayerJoined's answer: whether to let the player in, and who the player really is (address and session).</summary>
 public sealed record PlayerJoin(bool Allowed, string Reason, string SessionId, string ClientAddr);
@@ -79,4 +85,8 @@ internal static class Map
 
     public static TravelOutcome ToSdk(this P.TravelResponse r) =>
         new((TravelState)(int)r.State, r.InstanceId, TimeSpan.FromMilliseconds(r.EtaMs), r.Reason);
+
+    public static HostAnchor ToSdk(this P.Anchor a) =>
+        new(a.Owner, a.LevelId, a.LevelHash, a.Depth, new HostVec3(a.Position?.X ?? 0, a.Position?.Y ?? 0, a.Position?.Z ?? 0), a.Yaw,
+            DateTimeOffset.FromUnixTimeMilliseconds(a.PlacedUnixMs));
 }

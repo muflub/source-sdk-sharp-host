@@ -6,7 +6,7 @@ using P = SourceSharp.Host.Proto;
 namespace TF2.Descent.Service.Api;
 
 /// <summary>§6.4 parties (D8: at most four, leader invites and kicks).</summary>
-public sealed class PartyApi(IHostData data) : P.PartyService.PartyServiceBase
+public sealed class PartyApi(IHostData data, IKeyValueStore store, Travel.Anchors anchors) : P.PartyService.PartyServiceBase
 {
     public const int MaxMembers = 4;
 
@@ -46,22 +46,43 @@ public sealed class PartyApi(IHostData data) : P.PartyService.PartyServiceBase
             return (await tx.Parties.Join(request.PartyId, request.CharacterId)).ToProto();
         });
 
-    public override Task<P.Ack> Leave(P.PartyRequest request, ServerCallContext context) =>
-        data.Idempotent(context, request.RequestId, P.Ack.Parser, async (tx, caller) =>
+    // D-H18: whoever leaves (or is kicked) keeps their levels and teleporter on copies of their own.
+    public override async Task<P.Ack> Leave(P.PartyRequest request, ServerCallContext context)
+    {
+        var stayer = "";
+        var ack = await data.Idempotent(context, request.RequestId, P.Ack.Parser, async (tx, caller) =>
         {
             await DescentLedger.Leased(tx, caller, request.CharacterId, request.LeaseToken.Bytes());
-            await tx.Parties.Remove(request.PartyId, request.CharacterId);
+            var left = await tx.Parties.Remove(request.PartyId, request.CharacterId);
+            await Travel.LevelForks.ForLeaver(tx, store, request.CharacterId, left?.Members ?? [], context.CancellationToken);
+            stayer = left?.Leader ?? "";
             return new P.Ack();
         });
+        await Told(request.CharacterId, stayer, context.CancellationToken);
+        return ack;
+    }
 
-    public override Task<P.Party> Kick(P.PartyRequest request, ServerCallContext context) =>
-        data.Idempotent(context, request.RequestId, P.Party.Parser, async (tx, caller) =>
+    public override async Task<P.Party> Kick(P.PartyRequest request, ServerCallContext context)
+    {
+        var party = await data.Idempotent(context, request.RequestId, P.Party.Parser, async (tx, caller) =>
         {
             await DescentLedger.Leased(tx, caller, request.CharacterId, request.LeaseToken.Bytes());
             var p = await Load(tx, request.PartyId);
             Leader(p, request.CharacterId);
-            return (await tx.Parties.Remove(p.Id, request.TargetCharacter) ?? p).ToProto();
+            var left = await tx.Parties.Remove(p.Id, request.TargetCharacter);
+            await Travel.LevelForks.ForLeaver(tx, store, request.TargetCharacter, left?.Members ?? [], context.CancellationToken);
+            return (left ?? p).ToProto();
         });
+        await Told(request.TargetCharacter, request.CharacterId, context.CancellationToken);
+        return party;
+    }
+
+    /// <summary>The leaver's town and the party's town both lay out their pads again.</summary>
+    async Task Told(string leaver, string stayer, CancellationToken ct)
+    {
+        await anchors.Notify(leaver, ct);
+        if (stayer.Length > 0) await anchors.Notify(stayer, ct);
+    }
 
     public override Task<P.Party> Get(P.PartyRequest request, ServerCallContext context) =>
         data.Read(context, async (tx, _) =>

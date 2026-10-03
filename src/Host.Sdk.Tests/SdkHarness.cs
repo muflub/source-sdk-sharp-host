@@ -236,4 +236,10 @@ public sealed class RecordingTripPlanner : TF2.Descent.Service.Travel.ITripPlann
             ? new P.TravelResponse { State = P.TravelState.Waiting, EtaMs = 1500 }
             : new P.TravelResponse { State = P.TravelState.Started, InstanceId = $"lvl-{depth}" });
     }
+
+    public Task<P.TravelResponse> ToAnchor(InstanceRecord caller, string characterId, byte[] token, string anchorOwner, string requestId, CancellationToken ct)
+    {
+        Calls.Enqueue(($"ReturnToAnchor {anchorOwner}", new P.TravelRequest { RequestId = requestId, CharacterId = characterId, LeaseToken = Google.Protobuf.ByteString.CopyFrom(token) }));
+        return Task.FromResult(new P.TravelResponse { State = P.TravelState.Started, InstanceId = "lvl-anchor" });
+    }
 }
