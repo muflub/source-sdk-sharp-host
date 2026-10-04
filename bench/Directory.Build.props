@@ -1,0 +1,6 @@
+<Project>
+  <!-- Stub: stops MSBuild walking up to the repo's Directory.Build.props, so the
+       measurement harness stays out of the product's build rules on purpose
+       (central package pinning must not leak to ZstdSharp.Port, the plan's
+       measurement-only codec dependency — see Bench.csproj). -->
+</Project>

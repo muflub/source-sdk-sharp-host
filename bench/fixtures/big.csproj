@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The fixture dll, built three times (A/B/C) by bench/Program.cs via
+       -p:FixtureSource=… -p:FixtureName=…. Standalone for the same reason
+       Bench.csproj is. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <Deterministic>true</Deterministic>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AssemblyName>big</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <FixtureSource Condition="'$(FixtureSource)' == ''">gen.A.cs</FixtureSource>
+    <FixtureName Condition="'$(FixtureName)' == ''">A</FixtureName>
+    <BaseIntermediateOutputPath Condition="'$(BaseIntermediateOutputPath)' == ''">$(MSBuildProjectDirectory)/obj/$(FixtureName)/</BaseIntermediateOutputPath>
+    <OutputPath Condition="'$(OutputPath)' == ''">$(MSBuildProjectDirectory)/bin/$(FixtureName)/</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(MSBuildProjectDirectory)/$(FixtureSource)" />
+  </ItemGroup>
+</Project>

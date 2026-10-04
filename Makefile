@@ -25,7 +25,7 @@ ENGINE_FILES  ?= $(HOME)/.steam/steam/steamapps/common/Source SDK Base 2013 Mult
 TEST_ENV      := MSBUILDDISABLENODEREUSE=1
 SLN           := Host.slnx
 
-.PHONY: setup build test check pack publish clean run local gateway fake \
+.PHONY: setup build test check bench pack publish clean run local gateway fake \
         images image-service image-gateway image-engine image-fake \
         cluster-up cluster-down deploy undeploy admin logs mod-image-dev \
         bake live-h0 live-h4 live-h5 live-h6 live-h7 live-h9 maptools-clean
@@ -49,6 +49,12 @@ test:
 	@$(MAKE) --no-print-directory maptools-clean
 
 check: build test
+
+# The §3.1 measurement table of docs/plans/plan_build_patch.md, reproducible:
+# builds the fixtures, prints the stream-level delta table, asserts the rulings
+# (exit ≠ 0 when the measured basis moved). Standalone project, not in Host.slnx.
+bench:
+	DOTNET=$(DOTNET) $(TEST_ENV) $(DOTNET) run --project bench/Bench.csproj -c Release -v q --nologo
 
 # We never write into a root: after any build its porcelain status is empty.
 maptools-clean:
