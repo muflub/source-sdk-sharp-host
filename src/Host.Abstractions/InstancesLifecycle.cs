@@ -91,6 +91,8 @@ public abstract record InstanceCommand
     public sealed record AnchorsChanged(string PartyId) : InstanceCommand;
     /// <summary>D-H17: a store key this instance can read changed; no value, the server reads it.</summary>
     public sealed record StoreChanged(StoreScope Scope, string Owner, string Key) : InstanceCommand;
+    /// <summary>plan_steam_auth S-20: ask the player's client for a fresh Steam ticket, answered with SubmitTicket.</summary>
+    public sealed record Reauth(string SteamId, ulong GsSteamId, string Nonce, DateTimeOffset Deadline, string Peer) : InstanceCommand;
 }
 
 public interface IInstanceCommands

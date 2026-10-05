@@ -20,6 +20,9 @@ spec:
               valueFrom: { fieldRef: { fieldPath: status.podIP } }
             - name: GATEWAY_Service
               value: http://tf2-descent-service:5002
+            # plan_steam_auth S-9: anonymous logon unless this optional Secret holds a GSLT.
+            - name: GATEWAY_Steam__LoginToken
+              valueFrom: { secretKeyRef: { name: tf2-descent-steam, key: login-token, optional: true } }
           ports:
             - { name: game, containerPort: 27015, protocol: UDP }
             - { name: control, containerPort: 5003 }

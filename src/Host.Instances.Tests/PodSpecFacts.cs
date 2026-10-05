@@ -111,6 +111,7 @@ public class PodSpecFacts
         string[] expected =
         [
             "-nohltv", "+tv_enable", "0", "-devapi", "-devapisocket", "-condebug", "-nomessagebox", "-nocrashdialog", "-assertlog",
+            "+sv_lan", "1", // plan_steam_auth S-6: Steam off (SteamOffArgs)
             "-game", "/game/mods/tf2_descent", "-console", "-port", "27015", "-ip", "0.0.0.0",
             "+maxplayers", "4", "+map", "tf2_descent-7-abc123",
         ];
@@ -305,5 +306,25 @@ public class PodSpecFacts
     public void Level_without_a_hash_is_refused()
     {
         Assert.Throws<InvalidOperationException>(() => GamePodBuilder.Build(Options(), Mod, Row(InstanceKind.Level, hash: null), Token));
+    }
+
+    [Fact]
+    public void With_steam_off_the_engine_gets_sv_lan_1_before_the_map_and_the_launcher_synthetic_addresses()
+    {
+        var g = Game(Pod(InstanceKind.Level));
+        var args = g.Args.ToList();
+        var lan = args.IndexOf("+sv_lan");
+        Assert.True(lan >= 0, string.Join(' ', args));
+        Assert.Equal("1", args[lan + 1]);
+        Assert.True(lan < args.IndexOf("+map"));
+        Assert.Contains(g.Env, e => e.Name == "RELAY_InterposeAddresses" && e.Value == "Synthetic");
+    }
+
+    [Fact]
+    public void With_steam_on_the_engine_keeps_its_own_steam_and_sees_real_addresses()
+    {
+        var g = Game(Pod(InstanceKind.Level, o => o.SteamOff = false));
+        Assert.DoesNotContain("+sv_lan", g.Args);
+        Assert.Contains(g.Env, e => e.Name == "RELAY_InterposeAddresses" && e.Value == "Real");
     }
 }

@@ -246,6 +246,8 @@ public sealed class FakeGameServer : IAsyncDisposable
         {
             var r = log[_logIndex];
             if (r.Type == ToyWire.Connect) _connecting.Add(r.From); // a handshake: join once it is accepted
+            if (ToyWire.TryReadTicketAnswer(r.Bytes, out var nonce, out var ticket) && _reauths.Remove(nonce, out var ask))
+                _ = SubmitTicket(ask, ticket);
             foreach (var p in _players.Values)
                 if (p.EndPoint is { } ep && ep.Equals(r.From)) p.LastSeen = DateTime.UtcNow;
         }
@@ -433,6 +435,26 @@ public sealed class FakeGameServer : IAsyncDisposable
         c.Shutdown += s => { Note($"shutdown {s.Reason}"); _ = Task.Run(() => StopAsync(0)); };
         c.AnchorsChanged += a => Note($"anchors_changed {a.PartyId}");
         c.StoreChanged += s => Note($"store_changed {s.Scope} {s.Owner} {s.Key}");
+        // plan_steam_auth S-20: carry the host's request for a fresh ticket to the client over the toy channel.
+        c.Reauth += r =>
+        {
+            if (_players.TryGetValue(r.SteamId, out var p) && p.EndPoint is { } ep)
+            {
+                _reauths[r.Nonce] = r;
+                _backend.SendTo(ep, ToyWire.ReauthAskPacket(r.Nonce));
+                Note($"reauth_ask {r.SteamId}");
+            }
+            else Note($"reauth_unknown {r.SteamId}");
+        };
+    }
+
+    readonly Dictionary<string, ReauthRequest> _reauths = [];
+
+    /// <summary>A client's fresh ticket, found in the engine's log: returned to the host under the ask's nonce.</summary>
+    async Task SubmitTicket(ReauthRequest r, byte[] ticket)
+    {
+        var outcome = await r.Submit(ticket);
+        Note($"reauth {r.SteamId} {(outcome.Ok ? outcome.Value.ToString() : outcome.Refusal!.Reason)}");
     }
 
     /// <summary>

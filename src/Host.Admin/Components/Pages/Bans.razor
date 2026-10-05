@@ -1,0 +1,45 @@
+@page "/admin/bans"
+@inherits AdminPage
+@* plan_steam_auth S-14, S-15: every ban the gateway enforces, by address (IPv4 or CIDR) or SteamID; admin bans and the gateway's
+   automatic temp bans. Adding or lifting one reaches the gateway at once, and a new ban kicks what it covers. *@
+<h1>Bans</h1>
+<ResultBanner Result="Last" Error="@LoadError" OnKickAndEdit="KickAndEdit" />
+<ConfirmDialog Pending="Pending" OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+<div class="bar">
+    <select id="ban-kind" @bind="Kind"><option value="address">address / CIDR</option><option value="steamid">SteamID</option></select>
+    <input id="ban-value" placeholder="203.0.113.7, 198.51.100.0/24 or 7656…" @bind="Value" />
+    <input id="ban-minutes" placeholder="minutes (empty = permanent)" @bind="Minutes" />
+    <input id="ban-reason" placeholder="reason" @bind="Reason" />
+    <button id="ban-add" @onclick="Add">Ban</button>
+</div>
+<div class="bar"><label><input type="checkbox" id="show-expired" @bind="ShowExpired" /> show expired</label></div>
+<table id="bans">
+    <tr><th>kind</th><th>value</th><th>until</th><th>source</th><th>reason</th><th>since</th><th></th></tr>
+    @foreach (var b in Shown)
+    {
+        <tr id="ban-@b.Kind-@b.Value.Replace('/', '_').Replace('.', '_')">
+            <td>@b.Kind</td><td>@b.Value</td><td>@(b.Until?.ToString("u") ?? "permanent")</td><td>@b.Source</td><td>@b.Reason</td><td>@b.Created.ToString("u")</td>
+            <td><button class="lift" @onclick="() => AskLift(b)">Lift</button></td>
+        </tr>
+    }
+</table>
+
+@code {
+    protected override bool Live => true;
+    string Kind = "address";
+    string? Value, Minutes, Reason;
+    bool ShowExpired;
+    IReadOnlyList<BanRecord> All = [];
+
+    IEnumerable<BanRecord> Shown => All.Where(b => ShowExpired || b.LiveAt(Now));
+
+    Task Add()
+    {
+        TimeSpan? duration = int.TryParse(Minutes, out var m) && m > 0 ? TimeSpan.FromMinutes(m) : null;
+        return Run(() => Actions.AddBan(Kind, Value ?? "", duration, Reason));
+    }
+
+    void AskLift(BanRecord b) => Ask($"Lift the ban on {b.Kind} {b.Value}", new { b.Until, b.Source, b.Reason }, null, () => Actions.LiftBan(b.Kind, b.Value));
+
+    protected override async Task LoadAsync() => All = await Data.ReadAsync((tx, _) => tx.Bans.List());
+}

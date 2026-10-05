@@ -15,6 +15,16 @@ public interface IGatewayControl
     /// <summary>The whole table from the registry: the cue after a restart, a stale version or a re-attach.</summary>
     Task SyncTable(CancellationToken ct = default);
     long TableVersion { get; }
+    /// <summary>plan_steam_auth S-14: the live bans, after any change; the gateway kicks what they now cover.</summary>
+    Task PushBans(CancellationToken ct = default);
+    /// <summary>S-21: the live options, after a Config-page edit.</summary>
+    Task PushOptions(CancellationToken ct = default);
+    /// <summary>S-13: the player left for good; release the ticket now.</summary>
+    Task EndAuth(string sessionId, CancellationToken ct = default);
+    /// <summary>S-18: the server-browser entry, for the gateway's A2S answers and the Steam listing.</summary>
+    Task SetServerInfo(G.ServerInfo info, CancellationToken ct = default);
+    /// <summary>S-20: a fresh ticket from the client; the gateway's verdict (outcome "Ok", "Denied", …).</summary>
+    Task<G.ReauthResponse> Reauth(string sessionId, string nonce, byte[] ticket, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -79,6 +89,80 @@ public sealed class GatewayControlClient(ServiceOptions options, IHostData data,
     public Task BackendReady(string backend, bool ready, CancellationToken ct = default) =>
         Call(v => Client.BackendReadyAsync(new G.BackendReadyRequest { Version = (ulong)v, Backend = backend, Ready = ready }, cancellationToken: ct).ResponseAsync, ct);
 
+    /// <summary>The settings key of the live options (S-21), a LiveOptions as protobuf JSON; absent = the gateway's own config.</summary>
+    public const string OptionsKey = "gateway.options";
+
+    public static G.LiveOptions? ParseOptions(Setting? s) =>
+        s is null ? null : Google.Protobuf.JsonParser.Default.Parse<G.LiveOptions>(s.ValueJson);
+
+    static G.Ban ToProto(BanRecord b) => new()
+    {
+        Kind = b.Kind, Value = b.Value, Reason = b.Reason,
+        UntilUnixMs = b.Until?.ToUnixTimeMilliseconds() ?? 0,
+    };
+
+    public async Task PushBans(CancellationToken ct = default)
+    {
+        if (Off) return;
+        var bans = await data.ReadAsync((tx, _) => tx.Bans.List(clock.GetUtcNow()), ct);
+        await Call(v =>
+        {
+            var r = new G.SetBansRequest { Version = (ulong)v };
+            r.Bans.AddRange(bans.Select(ToProto));
+            return Client.SetBansAsync(r, cancellationToken: ct).ResponseAsync;
+        }, ct);
+    }
+
+    /// <summary>The admin's Config edit (S-21): the gateway validates and applies it, or says why not.</summary>
+    public async Task ApplyOptions(G.LiveOptions options, CancellationToken ct = default)
+    {
+        if (Off) throw HostRefusal.Precondition("no_gateway", "no gateway configured");
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await Client.SetOptionsAsync(new G.SetOptionsRequest { Version = (ulong)Next(), Options = options }, cancellationToken: ct);
+                return;
+            }
+            catch (RpcException e) when (e.StatusCode == StatusCode.InvalidArgument)
+            { throw HostRefusal.Precondition("invalid_options", "the gateway refused the options: a value is out of range"); }
+            catch (RpcException e) when (e.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded)
+            { throw HostRefusal.Precondition("gateway_unreachable", e.Status.Detail); }
+            // A stale version: the gateway's table moved on. Sync once and try again; twice stale is a refusal.
+            catch (RpcException e) when (e.StatusCode == StatusCode.FailedPrecondition && attempt == 1) { await SyncTable(ct); }
+            catch (RpcException e) when (e.StatusCode == StatusCode.FailedPrecondition)
+            { throw HostRefusal.Precondition("gateway_stale", e.Status.Detail); }
+        }
+    }
+
+    public async Task PushOptions(CancellationToken ct = default)
+    {
+        if (Off) return;
+        if (ParseOptions(await data.ReadAsync((tx, _) => tx.Settings.Get(OptionsKey), ct)) is not { } options) return;
+        await Call(v => Client.SetOptionsAsync(new G.SetOptionsRequest { Version = (ulong)v, Options = options }, cancellationToken: ct).ResponseAsync, ct);
+    }
+
+    public Task SetServerInfo(G.ServerInfo info, CancellationToken ct = default) =>
+        Call(_ => Client.SetServerInfoAsync(info, cancellationToken: ct).ResponseAsync, ct);
+
+    public Task EndAuth(string sessionId, CancellationToken ct = default) =>
+        Call(_ => Client.EndAuthAsync(new G.EndAuthRequest { SessionId = sessionId }, cancellationToken: ct).ResponseAsync, ct);
+
+    public async Task<G.ReauthResponse> Reauth(string sessionId, string nonce, byte[] ticket, CancellationToken ct = default)
+    {
+        if (Off) return new G.ReauthResponse { Outcome = "Unavailable", Reason = "no gateway configured" };
+        try
+        {
+            return await Client.ReauthAsync(new G.ReauthRequest { SessionId = sessionId, Nonce = nonce, Ticket = Google.Protobuf.ByteString.CopyFrom(ticket) },
+                                            deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: ct);
+        }
+        catch (RpcException e)
+        {
+            log.LogWarning("Reauth for {Session} failed: {Status}", sessionId, e.Status);
+            return new G.ReauthResponse { Outcome = "Unavailable", Reason = e.Status.Detail };
+        }
+    }
+
     public async Task SyncTable(CancellationToken ct = default)
     {
         if (Off) return;
@@ -101,8 +185,8 @@ public sealed class GatewayControlClient(ServiceOptions options, IHostData data,
             if (hub is not null) table.DefaultBackend = Backend(hub, options);
             foreach (var i in instances.Where(i => i.PodIp is not null && i.State != InstanceState.Live))
                 table.UnreadyBackends.Add(Backend(i, options));
-            if (await tx.Settings.Get(AdminGateway.BansKey) is { } bans)
-                table.BannedAddresses.AddRange(System.Text.Json.JsonSerializer.Deserialize<List<string>>(bans.ValueJson) ?? []);
+            table.Bans.AddRange((await tx.Bans.List(clock.GetUtcNow())).Select(ToProto));
+            if (ParseOptions(await tx.Settings.Get(OptionsKey)) is { } live) table.Options = live;
             foreach (var s in await tx.Sessions.Open())
                 table.Routes.Add(new G.Route
                 {

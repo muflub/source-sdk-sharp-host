@@ -1,0 +1,46 @@
+# A second, fully separate copy of the host on the same local k3s (make … ISOLATED=1), beside whatever
+# runs in tf2-descent, touching none of it: its own namespace, its own name for the one cluster-scoped
+# object (the content PV), and its own node ports for the two LoadBalancers k3s's servicelb publishes
+# on the node (UDP 27015 for clients becomes 27215, TCP 5004 for fastdl becomes 5204). Inside the
+# namespace everything is as in tf2-descent: pods still listen on 27015 and 5004.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target: { kind: Namespace, name: tf2-descent }
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: tf2-descent-iso
+  - target: { kind: PersistentVolume, name: tf2-descent-content-local }
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: tf2-descent-content-iso
+  - target: { kind: PersistentVolumeClaim, name: content }
+    patch: |-
+      - op: replace
+        path: /spec/volumeName
+        value: tf2-descent-content-iso
+  - target: { kind: Service, name: tf2-descent-gateway }
+    patch: |-
+      - op: replace
+        path: /spec/ports/0/port
+        value: 27215
+  - target: { kind: Service, name: tf2-descent-fastdl }
+    patch: |-
+      - op: replace
+        path: /spec/ports/0/port
+        value: 5204
+  # A strategic merge: env entries merge by name, so FastDlUrl is replaced, not doubled. Instances.Namespace
+  # needs nothing: the base reads it from the pod's own namespace (fieldRef).
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata: { name: tf2-descent-service }
+      spec:
+        template:
+          spec:
+            containers:
+              - name: service
+                env:
+                  - { name: SOURCESHARP_SERVICE_Instances__FastDlUrl, value: "http://127.0.0.1:5204/" }

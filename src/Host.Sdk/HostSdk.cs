@@ -71,7 +71,7 @@ public sealed class HostSdkOptions
 public sealed class HostSdk : IAsyncDisposable
 {
     /// <summary>Announced in Booting; the service refuses an SDK major it does not speak (§6.6).</summary>
-    public const string Version = "2.5.0";
+    public const string Version = "2.6.0";
 
     readonly SdkCore _core;
     readonly HostSession _session;
@@ -107,6 +107,7 @@ public sealed class HostSdk : IAsyncDisposable
         Store = new HostStore(_core);
         _peers = new Peers(_core);
         Peers = _peers;
+        _core.Peers = _peers;
         _session = new HostSession(_core, commands);
     }
 
@@ -186,6 +187,8 @@ internal sealed class SdkCore : IDisposable
 
     /// <summary>IPeers' per-session cache; PlayerJoined primes it and PlayerLeft clears it.</summary>
     public System.Collections.Concurrent.ConcurrentDictionary<string, PeerIdentity> PeerCache { get; } = new();
+    /// <summary>Who is behind a peer (set by HostSdk once built): PlayerJoined asks it for the validated SteamID.</summary>
+    public IPeers Peers { get; set; } = null!;
 
     public void Cancel() => _stopping.Cancel();
 

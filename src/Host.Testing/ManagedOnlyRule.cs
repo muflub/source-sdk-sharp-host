@@ -6,9 +6,14 @@ namespace SourceSharp.Host.Testing;
 /// CLAUDE.md "Everything is managed C#" (TF2 plan R15): no DllImport, LibraryImport,
 /// extern or AllowUnsafeBlocks anywhere, and the two assemblies that ship into the game
 /// (Host.Sdk, Host.Contracts) reference nothing but their allowed closure.
+/// One exemption (plan_steam_auth S-2): <see cref="UnsafeAllowed"/> may set AllowUnsafeBlocks, and nothing else.
 /// </summary>
 public static partial class ManagedOnlyRule
 {
+    /// <summary>The projects allowed AllowUnsafeBlocks: the Steamworks binding, which pins buffers for the flat C API.
+    /// DllImport, LibraryImport and extern stay refused there too.</summary>
+    public static readonly IReadOnlySet<string> UnsafeAllowed = new HashSet<string>(StringComparer.Ordinal) { "Host.Steam" };
+
     [GeneratedRegex(@"\[\s*(DllImport|LibraryImport)(Attribute)?\b|\bextern\s+(?!alias\b)\w|\bAllowUnsafeBlocks\b")]
     private static partial Regex Forbidden();
 
@@ -16,10 +21,11 @@ public static partial class ManagedOnlyRule
     private static partial Regex Comments();
 
     /// <summary>Each forbidden construct in <paramref name="text"/>, comments ignored.</summary>
-    public static IReadOnlyList<string> Violations(string text)
+    public static IReadOnlyList<string> Violations(string text, bool allowUnsafeBlocks = false)
     {
         var code = Comments().Replace(text, " ");
-        return Forbidden().Matches(code).Select(m => m.Value.Trim()).ToList();
+        return Forbidden().Matches(code).Select(m => m.Value.Trim())
+            .Where(v => !(allowUnsafeBlocks && v == "AllowUnsafeBlocks")).ToList();
     }
 
     [GeneratedRegex(@"<(ProjectReference|PackageReference|Reference)\s+Include=""([^""]+)""")]

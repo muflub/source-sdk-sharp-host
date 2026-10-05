@@ -23,3 +23,17 @@ patches:
                   - { name: SOURCESHARP_SERVICE_Instances__SkipLevelFetch, value: "true" }
                   - { name: SOURCESHARP_SERVICE_Instances__ExtraEnv__FAKEGAME_ControlAnyAddress, value: "true" }
                   - { name: SOURCESHARP_SERVICE_MapPool__DefaultPerDepth, value: "0" }
+  # plan_steam_auth: the fake tier's gateway validates with the fake Steam (no libsteam_api, no Steam
+  # account), on the toy wire the fake clients and fake game speak.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: tf2-descent-gateway }
+      spec:
+        template:
+          spec:
+            containers:
+              - name: gateway
+                env:
+                  - { name: GATEWAY_Steam__Mode, value: "Fake" }
+                  - { name: GATEWAY_Wire, value: "Toy" }

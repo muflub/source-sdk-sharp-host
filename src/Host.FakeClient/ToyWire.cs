@@ -90,12 +90,14 @@ public static class ToyWire
         return true;
     }
 
-    /// <summary>A readable toy ticket: "TOYT" + SteamID64.</summary>
-    public static byte[] Ticket(ulong steamId)
+    /// <summary>A readable toy ticket: "TOYT" + SteamID64, then <paramref name="tail"/> (what makes two tickets of one
+    /// player differ, and what the fake Steam reads a scripted verdict from, e.g. <c>deny:vac</c>).</summary>
+    public static byte[] Ticket(ulong steamId, ReadOnlySpan<byte> tail = default)
     {
-        var t = new byte[12];
+        var t = new byte[12 + tail.Length];
         TicketMagic.CopyTo(t);
         BinaryPrimitives.WriteUInt64LittleEndian(t.AsSpan(TicketSteamIdOffset), steamId);
+        tail.CopyTo(t.AsSpan(12));
         return t;
     }
 
@@ -152,6 +154,38 @@ public static class ToyWire
     public static byte[] EchoPacket(uint seq, string instanceId) => Net(Echo, seq, Encoding.UTF8.GetBytes(instanceId));
     public static byte[] RetryPacket(uint seq = 0) => Net(Retry, seq);
     public static byte[] DataPacket(uint seq, ReadOnlySpan<byte> payload) => Net(Data, seq, payload);
+
+    // plan_steam_auth S-20, the toy game's own channel: the server asks for a fresh ticket, the client answers.
+    static ReadOnlySpan<byte> ReauthMagic => "REAUTH:"u8;
+    static ReadOnlySpan<byte> TicketMagic2 => "TICKET:"u8;
+
+    /// <summary>Server → client: mint a fresh ticket and answer with <paramref name="nonce"/>.</summary>
+    public static byte[] ReauthAskPacket(string nonce) => DataPacket(0, [.. ReauthMagic, .. Encoding.ASCII.GetBytes(nonce)]);
+
+    /// <summary>Client → server: the fresh ticket for <paramref name="nonce"/>.</summary>
+    public static byte[] TicketAnswerPacket(string nonce, ReadOnlySpan<byte> ticket) =>
+        DataPacket(0, [.. TicketMagic2, .. Encoding.ASCII.GetBytes(nonce), (byte)':', .. ticket]);
+
+    public static bool TryReadReauthAsk(ReadOnlySpan<byte> p, out string nonce)
+    {
+        nonce = "";
+        if (KindOf(p) != Data || !PayloadOf(p).StartsWith(ReauthMagic)) return false;
+        nonce = Encoding.ASCII.GetString(PayloadOf(p)[ReauthMagic.Length..]);
+        return nonce.Length > 0;
+    }
+
+    public static bool TryReadTicketAnswer(ReadOnlySpan<byte> p, out string nonce, out byte[] ticket)
+    {
+        nonce = "";
+        ticket = [];
+        if (KindOf(p) != Data || !PayloadOf(p).StartsWith(TicketMagic2)) return false;
+        var rest = PayloadOf(p)[TicketMagic2.Length..];
+        var colon = rest.IndexOf((byte)':');
+        if (colon <= 0) return false;
+        nonce = Encoding.ASCII.GetString(rest[..colon]);
+        ticket = rest[(colon + 1)..].ToArray();
+        return true;
+    }
 
     public static uint SeqOf(ReadOnlySpan<byte> p) => p.Length >= 5 ? BinaryPrimitives.ReadUInt32LittleEndian(p[1..]) : 0;
     public static ReadOnlySpan<byte> PayloadOf(ReadOnlySpan<byte> p) => p.Length > 5 ? p[5..] : default;

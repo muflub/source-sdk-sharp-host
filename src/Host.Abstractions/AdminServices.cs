@@ -45,11 +45,15 @@ public interface IAdminLedger
 }
 
 /// <summary>One route in the gateway's table (§8.2).</summary>
-public sealed record AdminRoute(string SessionId, string ClientAddr, string? SteamId, string Backend, long BytesIn, long BytesOut, DateTimeOffset Since);
+public sealed record AdminRoute(string SessionId, string ClientAddr, string? SteamId, string Backend, long BytesIn, long BytesOut, DateTimeOffset Since,
+    string Auth = "");
+
+/// <summary>plan_steam_auth: the gateway's Steam game server as the Gateway page and Dashboard show it.</summary>
+public sealed record AdminSteamState(string Mode, bool LoggedOn, string GameServerSteamId, string Epoch);
 
 /// <summary>What the Gateway page shows beyond the sessions table: the gateway's own view.</summary>
 public sealed record AdminGatewaySnapshot(bool Reachable, string? Error, IReadOnlyList<AdminRoute> Routes, int AdmissionQueue,
-    string? A2S, IReadOnlyList<string> BannedAddresses, int PinPoolUsed, int PinPoolSize)
+    string? A2S, IReadOnlyList<string> BannedAddresses, int PinPoolUsed, int PinPoolSize, AdminSteamState? Steam = null)
 {
     public static AdminGatewaySnapshot Unreachable(string error) => new(false, error, [], 0, null, [], 0, 0);
 }
@@ -62,6 +66,11 @@ public interface IAdminGateway
     Task ForceToHub(string sessionId, CancellationToken ct = default);
     Task BanAddress(string address, string? note, CancellationToken ct = default);
     Task ReleasePin(string steamId, CancellationToken ct = default);
+    /// <summary>Sends the gateway the bans as stored now (plan_steam_auth S-14); it kicks what they cover.</summary>
+    Task PushBans(CancellationToken ct = default);
+    /// <summary>S-21: applies live options (a LiveOptions as protobuf JSON) at the gateway, which validates them; a
+    /// refused or unreachable gateway throws <see cref="HostRefusal"/> and nothing should be stored.</summary>
+    Task ApplyOptions(string json, CancellationToken ct = default);
 }
 
 /// <summary>The rules-module registry (D-H9, §1.2): state changes that must also reach the loaded modules.</summary>

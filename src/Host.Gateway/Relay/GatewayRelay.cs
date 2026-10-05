@@ -27,7 +27,7 @@ namespace SourceSharp.Host.Gateway.Relay;
 /// <para>All state is guarded by one lock. Datagrams are queued onto a stream under it, so ordering
 /// statements ("A's stream is ended before the first datagram is queued to B") hold by construction.</para>
 /// </summary>
-public sealed class GatewayRelay : IAsyncDisposable
+public sealed partial class GatewayRelay : IAsyncDisposable
 {
     readonly GatewayOptions _o;
     readonly TimeProvider _time;
@@ -53,11 +53,20 @@ public sealed class GatewayRelay : IAsyncDisposable
     readonly Dictionary<IPEndPoint, bool> _readiness = [];
     readonly Dictionary<IPAddress, (double Tokens, DateTimeOffset At)> _handshakeBuckets = [];
     long _sessionSeq;
+    /// <summary>
+    /// This process's part of every session id it makes. The gateway id alone repeats when the process restarts in
+    /// the same pod (a crash, or a container restart), and the counter starts again at 1: the new sessions would take
+    /// ids the service still holds for the old ones, and a late close for an old session would close a live one.
+    /// </summary>
+    readonly string _run = Guid.NewGuid().ToString("N")[..6];
     (long PacketsIn, long PacketsOut, long BytesIn, long BytesOut) _closedTotals;
 
     public GatewayRelay(GatewayOptions options, TimeProvider time, IGatewayEvents? events = null, ILogger? log = null, GatewayMetrics? metrics = null,
-                        Func<IPEndPoint, GrpcChannel>? channelFor = null)
+                        Func<IPEndPoint, GrpcChannel>? channelFor = null, Steam.ISteamAuthServer? steam = null)
     {
+        _steam = steam;
+        _strikes = new Admission.StrikeTable(() => options.TempBan);
+        if (steam is not null) steam.Revoked += OnSteamRevoked;
         Metrics = metrics ?? new GatewayMetrics();
         _o = options;
         _time = time;
@@ -89,6 +98,7 @@ public sealed class GatewayRelay : IAsyncDisposable
         _a2s = new A2sResponder(_publicEndPoint.Port);
         _publicLoop = Task.Run(PublicLoop);
         _sweep = _time.CreateTimer(_ => Sweep(), null, _o.SweepInterval, _o.SweepInterval);
+        if (_steam is not null) _steamTick = _time.CreateTimer(_ => _ = DrainSteamAsync(), null, _o.Steam.OutgoingTick, _o.Steam.OutgoingTick);
         _stats = _time.CreateTimer(_ => _events.Stats(Stats()), null, _o.StatsInterval, _o.StatsInterval);
         _log.LogInformation("gateway relaying on {Public}", PublicEndPoint);
     }
@@ -119,6 +129,13 @@ public sealed class GatewayRelay : IAsyncDisposable
 
     void OnClientPacket(SocketAddress from, ReadOnlySpan<byte> p)
     {
+        // Bans first, before A2S and before a session exists: dropped silently, no reply (plan_steam_auth S-14).
+        if (_bans.Count > 0 && AddressBanned((IPEndPoint)new IPEndPoint(IPAddress.Any, 0).Create(from))) return;
+        if (_steam is not null && SteamBound(p))
+        {
+            ToSteam(from, p);
+            return;
+        }
         if (IsConnectionless(p) && p.Length >= 5 && A2sResponder.IsQuery(p[4]))
         {
             // The gateway answers the server queries itself, for the hub; they never create a session (§8.3).
@@ -141,6 +158,7 @@ public sealed class GatewayRelay : IAsyncDisposable
         Metrics.PacketsIn.Inc();
         Metrics.BytesIn.Inc(p.Length);
 
+        if (_steam is not null && SteamGate(s, p)) return;
         if (_o.IdentityFirst && IsConnectionless(p) && IdentityFirst(s, p)) return;
         Forward(s, p);
     }
@@ -187,7 +205,8 @@ public sealed class GatewayRelay : IAsyncDisposable
             s.Phase = IdentityPhase.Challenged;
             s.GatewayChallenge = Random.Shared.Next(1, int.MaxValue);
             s.HeldGetChallenge = p.ToArray();
-            ReplyToClient(s, _codec.Challenge(s.GatewayChallenge, p));
+            var own = _codec.Challenge(s.GatewayChallenge, p);
+            ReplyToClient(s, _steam is null ? own : _codec.RewriteChallenge(own, GameServerSteamId, secure: false));
             return true;
         }
         if (!_codec.TryReadConnect(p, out var challenge, out var steamId)) return false;
@@ -455,6 +474,8 @@ public sealed class GatewayRelay : IAsyncDisposable
 
     void OnBackendPacket(Session s, ReadOnlySpan<byte> p)
     {
+        // One Steam identity for the cluster (plan_steam_auth S-4): the client sees the gateway's game server.
+        if (_steam is not null && _codec.IsChallenge(p)) p = _codec.RewriteChallenge(p, GameServerSteamId, secure: false);
         s.PacketsOut++;
         s.BytesOut += p.Length;
         Metrics.PacketsOut.Inc();
@@ -475,7 +496,7 @@ public sealed class GatewayRelay : IAsyncDisposable
         string id;
         _pendingRoutes.Remove(clientKey, out var route);
         _pendingSince.Remove(clientKey);
-        id = route is { SessionId.Length: > 0 } ? route.SessionId : $"{_o.GatewayId}-{Interlocked.Increment(ref _sessionSeq)}";
+        id = route is { SessionId.Length: > 0 } ? route.SessionId : $"{_o.GatewayId}-{_run}-{Interlocked.Increment(ref _sessionSeq)}";
         var s = new Session(id, key, client, _time.GetUtcNow());
         if (route is not null) ApplyRoute(s, route);
         _byAddress[key] = s;
@@ -484,11 +505,19 @@ public sealed class GatewayRelay : IAsyncDisposable
         return s;
     }
 
+    /// <summary>A session that has done nothing yet: never linked (so never announced), never authed, no handshake.</summary>
+    static bool Blank(Session s) => !s.EverLinked && s.Link is null && s.Auth == AuthState.None && s.Phase == IdentityPhase.None;
+
     static ulong? ParseSteamId(string? v) => ulong.TryParse(v, out var id) && id != 0 ? id : null;
 
     void ApplyRoute(Session s, Route r)
     {
-        if (ParseSteamId(r.Steamid) is { } sid) s.SteamId = sid;
+        if (ParseSteamId(r.Steamid) is { } sid)
+        {
+            s.SteamId = sid;
+            // Carried over a restart: validated before it, so it keeps relaying while it re-auths (S-11).
+            if (_steam is not null && r.Identified && s.Auth == AuthState.None) s.Auth = AuthState.Reauthing;
+        }
         s.Route = string.IsNullOrEmpty(r.Backend) ? null : IPEndPoint.Parse(r.Backend);
         if (!string.IsNullOrEmpty(r.Peer) && IPEndPoint.TryParse(r.Peer, out var peer)) s.PeerHint = peer;
     }
@@ -510,6 +539,7 @@ public sealed class GatewayRelay : IAsyncDisposable
 
     void Close(Session s, string reason)
     {
+        _steam?.End(s.Id); // the ticket is released the moment the session ends (S-13)
         var backend = s.Link?.Backend;
         var peer = s.Link?.Peer;
         Cut(s, reason);
@@ -566,6 +596,7 @@ public sealed class GatewayRelay : IAsyncDisposable
             }
             foreach (var s in _byKey.Values.Where(s => s.Hold is not null && s.Link is null && s.RetryAt <= now).ToList())
                 TryOpen(s);
+            SweepRevoked(now);
             foreach (var ip in _handshakeBuckets.Where(b => now - b.Value.At > TimeSpan.FromSeconds(10)).Select(b => b.Key).ToList())
                 _handshakeBuckets.Remove(ip);
             Metrics.AdmissionQueue.Set(_byKey.Values.Count(x => x.Hold is not null));
@@ -661,7 +692,15 @@ public sealed class GatewayRelay : IAsyncDisposable
             _pendingRoutes.Clear();
             foreach (var r in table.Routes)
             {
-                if (_byKey.TryGetValue(r.ClientAddr, out var s))
+                if (_byKey.TryGetValue(r.ClientAddr, out var s) && Blank(s) && r.SessionId.Length > 0 && s.Id != r.SessionId)
+                {
+                    // A restarted gateway heard the client before the table arrived: the session its packet made has
+                    // done nothing yet (nothing announced, authed or handshaking), so it becomes the carried one.
+                    _log.LogInformation("session {Fresh} {Client} resumes carried session {Carried}", s.Id, s.ClientKey, r.SessionId);
+                    s.Id = r.SessionId;
+                    ApplyRoute(s, r);
+                }
+                else if (s is not null)
                 {
                     if (ParseSteamId(r.Steamid) is { } sid) s.SteamId = sid;
                     s.Route = string.IsNullOrEmpty(r.Backend) ? null : IPEndPoint.Parse(r.Backend);
@@ -676,6 +715,8 @@ public sealed class GatewayRelay : IAsyncDisposable
             _readiness.Clear();
             foreach (var b in table.UnreadyBackends)
                 if (IPEndPoint.TryParse(b, out var ub)) _readiness[ub] = false;
+            if (table.Options is { } live && !TryApply(live)) _log.LogWarning("SyncTable carried invalid live options; kept the current ones");
+            ReplaceBans(table.Bans, table.BannedAddresses);
             ReleaseHolds();
             return ControlStatus.Ok;
         }
@@ -702,6 +743,9 @@ public sealed class GatewayRelay : IAsyncDisposable
     public void SetServerInfo(ServerInfo info)
     {
         lock (_sync) (_a2s ?? throw new InvalidOperationException("not started")).SetInfo(info);
+        // plan_steam_auth S-18: the same entry for the Steam game server's listing.
+        _steam?.ApplyListing(new Steam.SteamListing(info.Name, info.Map, info.Game, info.MaxPlayers, info.Tags, info.Region,
+            info.Rules.ToDictionary(kv => kv.Key, kv => kv.Value)), _o.Steam.Advertise);
     }
 
     public ServerInfo? ServerInfo { get { lock (_sync) return _a2s?.Info; } }
@@ -724,6 +768,9 @@ public sealed class GatewayRelay : IAsyncDisposable
                 BytesIn = s.BytesIn,
                 BytesOut = s.BytesOut,
                 Held = s.Hold?.Count ?? 0,
+                Auth = s.Auth.ToString().ToLowerInvariant(),
+                Epoch = s.Epoch ?? "",
+                TicketSha256Prefix = s.TicketHash is { } h ? h[..12] : "",
             }).ToList();
     }
 
@@ -744,6 +791,7 @@ public sealed class GatewayRelay : IAsyncDisposable
         _stop.Cancel();
         _sweep?.Dispose();
         _stats?.Dispose();
+        _steamTick?.Dispose();
         lock (_sync)
         {
             foreach (var s in _byKey.Values.ToList()) Cut(s, "gateway stopping");

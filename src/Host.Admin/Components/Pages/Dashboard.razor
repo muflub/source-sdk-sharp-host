@@ -17,6 +17,10 @@
         <tr><td>@g.Kind</td><td>@g.State</td><td>@g.Count</td></tr>
     }
 </table>
+@if (Steam is not null)
+{
+    <p id="steam">Steam: @Gateway.SteamLine(Steam)</p>
+}
 <p>open sessions: <b id="sessions">@Sessions</b> · items live <b id="live-items">@Totals.Live</b> (minted @Totals.Minted − terminal @Totals.Terminal)</p>
 
 <h2>Pool</h2>
@@ -78,6 +82,7 @@ else
 </table>
 
 @code {
+    AdminSteamState? Steam;
     protected override bool Live => true;
     bool FixSums;
     IReadOnlyList<(InstanceKind Kind, InstanceState State, int Count)> ByState = [];
@@ -103,6 +108,8 @@ else
             (IReadOnlyList<MapJob>)(await tx.MapJobs.List(take: 500)).Where(j => j.Kind == MapJobKind.Bake).Take(10).ToList()
         ));
         Pool = Optional<IMapPool>()?.Status;
+        try { Steam = Optional<IAdminGateway>() is { } gw ? (await gw.Snapshot()).Steam : null; }
+        catch (Exception e) when (e is HttpRequestException or IOException or InvalidOperationException or TimeoutException) { Steam = null; }
         Backups = Optional<IAdminBackups>();
         Ledger = Optional<IAdminLedger>();
         LastBackup = Backups is null ? null : (await Backups.List()).MaxBy(b => b.At);

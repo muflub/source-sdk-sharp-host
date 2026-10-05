@@ -8,8 +8,10 @@ namespace SourceSharp.Host.Gateway.Handshake;
 /// gateway does not reference: facts prove the two agree byte for byte).
 /// <code>
 /// q  FF FF FF FF 'q' clientChallenge:i32
-/// A  FF FF FF FF 'A' challenge:i32 clientChallenge:i32
-/// k  FF FF FF FF 'k' challenge:i32 ticketLen:u16 ticket["TOYT" steamId:u64] name 00
+/// A  FF FF FF FF 'A' challenge:i32 clientChallenge:i32 [gameServerSteamId:u64 secure:u8]
+/// k  FF FF FF FF 'k' challenge:i32 ticketLen:u16 ticket["TOYT" steamId:u64 …] name 00
+/// The bracketed challenge tail is what the gateway's rewrite adds (plan_steam_auth S-4); the toy engine
+/// sends 13 bytes and the toy client reads the first 13. The whole ticket is what the fake Steam validates.
 /// 9  FF FF FF FF '9' reason
 /// </code>
 /// </summary>
@@ -34,6 +36,30 @@ public sealed class ToyCodec : IHandshakeCodec
         if (len >= 12 && ticket[..4].SequenceEqual("TOYT"u8))
             steamId = BinaryPrimitives.ReadUInt64LittleEndian(ticket[4..]);
         return true;
+    }
+
+    public bool TryReadTicket(ReadOnlySpan<byte> p, out ulong steamId, out Range ticket)
+    {
+        steamId = 0;
+        ticket = default;
+        if (!Oob(p, (byte)'k') || p.Length < 11) return false;
+        int len = BinaryPrimitives.ReadUInt16LittleEndian(p[9..]);
+        if (len < 12 || p.Length < 11 + len || !p.Slice(11, 4).SequenceEqual("TOYT"u8)) return false;
+        steamId = BinaryPrimitives.ReadUInt64LittleEndian(p[15..]);
+        ticket = new Range(11, 11 + len);
+        return true;
+    }
+
+    public const int GameServerSteamIdOffset = 13, SecureOffset = 21;
+
+    public byte[] RewriteChallenge(ReadOnlySpan<byte> p, ulong gameServerSteamId, bool secure, int? authProtocol = null)
+    {
+        if (!IsChallenge(p)) throw new ArgumentException("not a toy challenge", nameof(p));
+        var b = new byte[Math.Max(p.Length, SecureOffset + 1)];
+        p.CopyTo(b);
+        BinaryPrimitives.WriteUInt64LittleEndian(b.AsSpan(GameServerSteamIdOffset), gameServerSteamId);
+        b[SecureOffset] = secure ? (byte)1 : (byte)0;
+        return b;
     }
 
     public byte[] Challenge(int challenge, ReadOnlySpan<byte> getChallenge)

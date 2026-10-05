@@ -21,6 +21,8 @@ public interface IPlayerSessions
     Task<P.PlayerJoinedResponse> PlayerJoined(InstanceRecord caller, string peer, string steamId, CancellationToken ct);
     Task<P.ResolvePeerResponse> ResolvePeer(InstanceRecord caller, string peer, CancellationToken ct);
     Task PlayerLeft(InstanceRecord caller, string peer, string steamId, CancellationToken ct);
+    /// <summary>plan_steam_auth S-20: a client's fresh ticket for a Reauth, through the gateway to Steam.</summary>
+    Task<P.SubmitTicketResponse> SubmitTicket(InstanceRecord caller, string peer, string nonce, byte[] ticket, CancellationToken ct);
 }
 
 /// <summary>Travel (§6.5) listens for HopReady after it sent PrepareHop.</summary>
@@ -94,6 +96,19 @@ public sealed class InstanceApi(
         if (!SupportedSdkMajors.Contains(major))
             throw new RpcException(new Status(StatusCode.Unimplemented,
                 $"sdk_version: this host speaks SDK {string.Join(", ", SupportedSdkMajors.Select(m => m + ".x"))}, the pod sent {request.SdkVersion}"));
+        if (request.Browser is { } browser)
+        {
+            // plan_steam_auth S-18: a key the host does not publish is the mod author's typo; refuse it at boot.
+            var unknown = Gateway.BrowserTemplate.UnknownKeys(browser);
+            if (unknown.Count > 0)
+                throw new RpcException(new Status(StatusCode.InvalidArgument,
+                    $"browser: unknown world-status key(s) {string.Join(", ", unknown.Select(k => "{" + k + "}"))}; this host publishes {string.Join(", ", Gateway.BrowserTemplate.Keys.Order().Select(k => "{" + k + "}"))}"));
+            await data.WriteAsync(async (tx, _) =>
+            {
+                await tx.Settings.Set(Gateway.BrowserPublisher.BlockKey, Google.Protobuf.JsonFormatter.Default.Format(browser), $"instance:{caller.Id}");
+                return true;
+            }, context.CancellationToken);
+        }
         P.ModuleAnswer answer;
         try { answer = await modules.Announce(caller, request.Module, context.CancellationToken); }
         catch (HostRefusal e) { throw Api.ToRpc(e); }
@@ -161,6 +176,9 @@ public sealed class InstanceApi(
         await sessions.PlayerLeft(context.Caller(), request.Peer, request.Steamid, context.CancellationToken);
         return new P.Ack();
     }
+
+    public override Task<P.SubmitTicketResponse> SubmitTicket(P.SubmitTicketRequest request, ServerCallContext context) =>
+        sessions.SubmitTicket(context.Caller(), request.Peer, request.Nonce, request.Ticket.ToByteArray(), context.CancellationToken);
 
     public override async Task<P.Ack> HopReady(P.HopReadyRequest request, ServerCallContext context)
     {

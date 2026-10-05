@@ -31,6 +31,13 @@ public sealed class RelayOptions
     /// </summary>
     public string Mode { get; set; } = "Loopback";
     public bool Interpose => Mode == "Interpose";
+    /// <summary>
+    /// Interpose only: what the engine sees for a client. Synthetic (default, plan_steam_auth S-6 B): a per-player
+    /// address from <see cref="AddressPool"/>, so the engine runs with <c>sv_lan 1</c> and no Steam of its own; the
+    /// gateway validated the player and PeerInfo maps the address back. Real: the client's own address.
+    /// </summary>
+    public string InterposeAddresses { get; set; } = "Synthetic";
+    public bool SyntheticAddresses => Interpose && InterposeAddresses == "Synthetic";
     /// <summary>A released address is not given to another player for this long.</summary>
     public TimeSpan Quarantine { get; set; } = TimeSpan.FromSeconds(60);
 
@@ -43,6 +50,7 @@ public sealed class RelayOptions
         foreach (var (name, v) in new[] { ("Listen", Listen), ("Health", Health), ("EngineEndpoint", EngineEndpoint) })
             if (!IPEndPoint.TryParse(v, out _)) p.Add($"{name} '{v}' is not ip:port");
         if (Mode is not ("Loopback" or "Interpose")) p.Add($"Mode '{Mode}' is not Loopback or Interpose");
+        if (InterposeAddresses is not ("Synthetic" or "Real")) p.Add($"InterposeAddresses '{InterposeAddresses}' is not Synthetic or Real");
         if (!IPNetwork.TryParse(AddressPool, out var pool) || !IPAddress.IsLoopback(pool.BaseAddress) || pool.PrefixLength < 8 || pool.PrefixLength > 30)
             p.Add($"AddressPool '{AddressPool}' is not a loopback network between /8 and /30");
         else if (pool.Contains(IPAddress.Loopback))

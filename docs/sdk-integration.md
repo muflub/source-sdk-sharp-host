@@ -102,6 +102,19 @@ var ready = await sdk.Session.MapReady(boundPort, mapName);   // the port the so
 - `BootInfo.InstanceSeed` seeds this instance's kill rolls; `Depth` / `LevelHash` say which
   level this is (the map file is already in `pool/maps/`, on the search path the mod's gameinfo adds).
 
+**The server-browser entry (SDK 2.6.0, plan_steam_auth S-18).** Before `Booting`, hand the SDK the mod's
+`browser` block from `mods.yaml` (the resolved `mod.dedicated.yaml` carries it; docs/mod-image.md):
+
+```csharp
+sdk.Session.Browser = new BrowserBlock(Name: "Descent ({levels_open} open)", Description: "TF2 Descent",
+    Tags: "rpg,coop", Region: "eu", Map: "depth {deepest}",
+    Rules: new Dictionary<string, string> { ["players_by_level"] = "{players_by_level}" });
+```
+
+The host renders the braces from the world as it is and lists the result (A2S and the Steam browser).
+A key the host does not publish refuses `Booting` with the list of keys it does publish: fix the
+block, don't ship it.
+
 On a refusal: retry `HostError.Unreachable` (the host restarted, or a new pod's network is
 not admitted yet — about 2 s on k3s) with a short delay; **log every other refusal loudly
 and exit non-zero.** The fake gives up silently on other errors, and a silent stall is
@@ -112,9 +125,10 @@ indistinguishable from a hang: it cost two investigations here.
 On a client fully connecting (the engine's "client active" point):
 
 ```csharp
-var j = await sdk.Session.PlayerJoined(peer, steamId);   // peer = the address string the engine has for this client, unchanged
+var j = await sdk.Session.PlayerJoined(peer, engineSteamId);   // peer = the address string the engine has for this client, unchanged
 if (!j.Ok) { kick(j.Refusal!.Reason); return; }
-if (!j.Value.Allowed) { kick(j.Value.Reason); return; }      // e.g. single_presence
+if (!j.Value.Allowed) { kick(j.Value.Reason); return; }      // e.g. single_presence, steamid_mismatch
+var steamId = j.Value.SteamId;                               // SDK 2.6.0: use THIS one from here on (see below)
 
 var list = await sdk.Characters.List(steamId);
 HostCharacter ch = list.Value.FirstOrDefault()
@@ -145,6 +159,14 @@ await sdk.Session.PlayerLeft(steamId, peer);
   quest): a crash loses only what came after the last checkpoint.
 - `sdk.Peers.Resolve(peer)` returns who is behind an address (real client address, session,
   SteamID) for logs and bans.
+- **Steam is the gateway's (plan_steam_auth S-6, S-7).** Hosted, the engine runs with `sv_lan 1` and no
+  Steam of its own: the gateway validated every player's ticket before any of their traffic reached this
+  pod. So the engine's own idea of a player is wrong: `GetClientSteamID` / `GetPlayerNetworkIDString` /
+  `status` give a LAN or invalid id, and the address the engine sees is a per-player loopback one
+  (127.x), not the player's. **Never key anything on them.** `PlayerJoined` answers the real SteamID
+  (`j.Value.SteamId`) and `Peers.Resolve(peer)` the real address. Engine bans (`banid`, `addip`) do
+  nothing useful; bans are the host's (admin Bans page), enforced at the gateway. The engine's id is
+  used only when nobody knows the peer (local mode, no gateway).
 
 ## 6. Commands from the service
 
@@ -159,6 +181,7 @@ Raised inside `Pump()` (`sdk.Commands.*`):
 | `Shutdown(s)` | checkpoint and release everyone still here, `DisposeAsync` the SDK, exit 0 |
 | `Say(s)` | print `s.Text` to all players |
 | `Exec(e)` | run `e.Command` as a server console command; `await e.Reply(output)` |
+| `Reauth(r)` | SDK 2.6.0 (plan_steam_auth S-20). The gateway restarted and lost this player's Steam session; the player keeps playing. Send the player's client a game message carrying `r.Nonce` and `r.GameServerSteamId`; the client calls `ISteamUser::GetAuthSessionTicket` (cancelling its previous ticket handle) and sends the bytes back; then `await r.Submit(ticket)` before `r.Deadline`. A client that never answers is kicked with "please reconnect" (or trusted, by the host's setting); a ticket Steam refuses gets the player kicked (`Kick` with Steam's reason). |
 
 Order of a hop, for reference: travel call (§7) → service picks/boots the target → gateway
 route flips → `PrepareHop` here → checkpoint + release + `Ready()` → `Retry` here → the client

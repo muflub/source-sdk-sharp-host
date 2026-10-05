@@ -631,3 +631,60 @@ internal sealed class AnchorStore(Ctx c) : IAnchorStore
     public async Task<IReadOnlyList<AnchorRecord>> For(IReadOnlyCollection<string> characterIds) =>
         (await c.Db.Anchors.AsNoTracking().Where(x => characterIds.Contains(x.CharacterId)).ToListAsync()).OrderBy(x => x.Placed).Select(x => x.ToRecord()).ToList();
 }
+
+internal sealed class SteamAuthStore(Ctx c) : ISteamAuthStore
+{
+    public async Task Upsert(SteamAuthRecord r)
+    {
+        c.Writable();
+        var row = await c.Db.SteamAuth.FirstOrDefaultAsync(x => x.SessionId == r.SessionId);
+        if (row is null) { row = new SteamAuthRow { SessionId = r.SessionId }; c.Db.SteamAuth.Add(row); }
+        row.SteamId = r.SteamId;
+        row.TicketSha256 = r.TicketSha256;
+        row.GsSteamId = r.GsSteamId;
+        row.Epoch = r.Epoch;
+        row.State = r.State;
+        row.ValidatedAt = r.ValidatedAt;
+        await c.Db.SaveChangesAsync();
+    }
+
+    public async Task<SteamAuthRecord?> Get(string sessionId) =>
+        (await c.Db.SteamAuth.AsNoTracking().FirstOrDefaultAsync(x => x.SessionId == sessionId))?.ToRecord();
+
+    public async Task<IReadOnlyList<SteamAuthRecord>> ForSteamId(string steamId) =>
+        (await c.Db.SteamAuth.AsNoTracking().Where(x => x.SteamId == steamId).ToListAsync()).Select(x => x.ToRecord()).ToList();
+
+    public async Task<bool> Delete(string sessionId)
+    {
+        c.Writable();
+        return await c.Db.SteamAuth.Where(x => x.SessionId == sessionId).ExecuteDeleteAsync() > 0;
+    }
+}
+
+internal sealed class BanStore(Ctx c) : IBanStore
+{
+    public async Task<BanRecord> Set(BanRecord b)
+    {
+        c.Writable();
+        var row = await c.Db.Bans.FirstOrDefaultAsync(x => x.Kind == b.Kind && x.Value == b.Value);
+        if (row is null) { row = new BanRow { Kind = b.Kind, Value = b.Value }; c.Db.Bans.Add(row); }
+        row.Until = b.Until;
+        row.Source = b.Source;
+        row.Reason = b.Reason;
+        row.Created = b.Created;
+        await c.Db.SaveChangesAsync();
+        return row.ToRecord();
+    }
+
+    public async Task<bool> Remove(string kind, string value)
+    {
+        c.Writable();
+        return await c.Db.Bans.Where(x => x.Kind == kind && x.Value == value).ExecuteDeleteAsync() > 0;
+    }
+
+    public async Task<IReadOnlyList<BanRecord>> List(DateTimeOffset? now = null)
+    {
+        var rows = await c.Db.Bans.AsNoTracking().OrderBy(x => x.Kind).ThenBy(x => x.Value).ToListAsync();
+        return rows.Select(x => x.ToRecord()).Where(b => now is null || b.LiveAt(now.Value)).ToList();
+    }
+}

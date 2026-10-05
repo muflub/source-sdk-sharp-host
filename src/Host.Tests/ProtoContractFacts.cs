@@ -64,7 +64,9 @@ public class ProtoContractFacts
     {
         var control = SourceSharp.Host.Proto.Gateway.GatewayReflection.Descriptor.Services.Single(s => s.Name == "GatewayControl");
         var missing = control.Methods
-            .Where(m => m.Name is not ("Snapshot" or "SetServerInfo" or "ReleasePin"))
+            // Not route-table calls: reads, the A2S snapshot, and idempotent commands keyed by a session or a
+            // SteamID that change no table (plan_steam_auth: EndAuth releases a ticket, Reauth validates one).
+            .Where(m => m.Name is not ("Snapshot" or "SetServerInfo" or "ReleasePin" or "EndAuth" or "Reauth"))
             .Where(m => m.InputType.FindFieldByName("version") is null)
             .Select(m => m.Name).ToList();
         Assert.Empty(missing);

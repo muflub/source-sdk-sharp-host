@@ -19,6 +19,7 @@
     <Project Path="src/Host.FakeRules/Host.FakeRules.csproj" />
     <Project Path="src/Host.Sdk/Host.Sdk.csproj" />
     <Project Path="src/Host.Relay/Host.Relay.csproj" />
+    <Project Path="src/Host.Steam/Host.Steam.csproj" />
     <Project Path="src/Host.Testing/Host.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -33,6 +34,7 @@
     <Project Path="src/Host.Modules.Tests/Host.Modules.Tests.csproj" />
     <Project Path="src/Host.Sdk.Tests/Host.Sdk.Tests.csproj" />
     <Project Path="src/Host.Relay.Tests/Host.Relay.Tests.csproj" />
+    <Project Path="src/Host.Steam.Tests/Host.Steam.Tests.csproj" />
     <Project Path="src/Host.Tests/Host.Tests.csproj" />
   </Folder>
   <Folder Name="/fixtures/">

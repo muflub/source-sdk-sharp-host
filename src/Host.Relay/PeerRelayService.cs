@@ -100,7 +100,8 @@ public sealed class PeerRelayService(PeerTable table, InterposeSwitchboard board
         if (!IPEndPoint.TryParse(open.ClientAddr, out var client) || client.AddressFamily != AddressFamily.InterNetwork)
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"client_addr '{open.ClientAddr}' is not an IPv4 ip:port"));
         var outbox = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
-        var (s, superseded) = board.Register(client, open.SessionId, steamId, time.GetUtcNow(), b => outbox.Writer.TryWrite(b));
+        var (s, superseded) = board.Register(client, open.SessionId, steamId, time.GetUtcNow(), b => outbox.Writer.TryWrite(b),
+            IPEndPoint.TryParse(open.PeerHint, out var hint) ? hint : null);
         if (superseded is not null)
             _log.LogInformation("client {Client}: session {Old} superseded by {New}", client, superseded.SessionId, open.SessionId);
         metrics.Streams.Inc();
@@ -115,7 +116,7 @@ public sealed class PeerRelayService(PeerTable table, InterposeSwitchboard board
         string? reason = null;
         try
         {
-            await down.WriteAsync(new RelayDown { Opened = new Opened { Peer = client.ToString() } }, stop.Token);
+            await down.WriteAsync(new RelayDown { Opened = new Opened { Peer = s.Engine.ToString() } }, stop.Token);
             var writer = Task.Run(async () =>
             {
                 try
@@ -210,11 +211,11 @@ public sealed class PeerInfoService(PeerTable table, InterposeSwitchboard board,
         OpenedUnixMs = l.Opened.ToUnixTimeMilliseconds(),
     };
 
-    /// <summary>Interpose mode: the peer the engine sees is the client's real address.</summary>
+    /// <summary>Interpose mode: the peer is what the engine sees (synthetic or real); the client address is real.</summary>
     static PeerEntry Entry(InterposeSession s) => new()
     {
         Found = true,
-        Peer = s.Client.ToString(),
+        Peer = s.Engine.ToString(),
         ClientAddr = s.Client.ToString(),
         SessionId = s.SessionId,
         Steamid = s.SteamId?.ToString() ?? "",

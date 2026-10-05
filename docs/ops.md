@@ -71,6 +71,55 @@ install); a launcher alone does not close the gap, and a 32-bit engine cannot lo
   `dotnet tool run dotnet-ef migrations add <Name> --project src/Host.Data --output-dir Migrations`.
 - Confirm what runs by the version on `/healthz` (the image's commit), never by a green test run.
 
+## Steam (plan_steam_auth)
+
+- **Where it runs.** The Steam game server is in the gateway process; game pods run the engine with
+  `sv_lan 1` and cannot reach the internet (NetworkPolicy). The gateway validates every client's ticket
+  before forwarding its connect, enforces every ban, and keeps one connection per SteamID.
+- **Building the gateway image** needs the Steamworks SDK (its `redistributable_bin/linux64/libsteam_api.so`):
+  `make image-gateway STEAMWORKS_SDK=<sdk root>` (default `~/Downloads/sdk`). The SDK is a build context
+  only; it is never committed. `steamclient.so` comes from steamcmd at build time.
+- **Logon.** Anonymous by default (`Steam.AppId` 243750). An anonymous gateway gets a new GS SteamID on
+  every start: harmless (players re-auth in game) but its browser identity changes. A GSLT, when one
+  exists, goes in the Secret `tf2-descent-steam` (key `login-token`); the gateway reads it if present.
+- **Steam down.** New connects are refused with `Steam.UnavailableReason`; players already in keep
+  playing; nobody is asked to re-auth or kicked until Steam is back. `/healthz` and the Dashboard show
+  the logon state and GS SteamID.
+- **What a gateway rollout costs players: a re-auth, not a reconnect.** The new gateway carries every
+  session over (`SyncTable`), the service asks each player's game server for a fresh ticket (the game's
+  client mints one), and the gateway validates it. A client that never answers (a game build without
+  re-auth) is kicked with "please reconnect" after `Steam.ReauthAttempts × Steam.ReauthTimeout`, or
+  trusted until it leaves with `Steam.ReauthUnanswered = Trust`. A rollout still drops every client
+  for the moments the relay is down (the deploy-drops-clients note).
+- **Live options** (`Steam.AuthTimeout`, `ReauthTimeout`, `ReauthAttempts`, `ReauthUnanswered`,
+  `ClaimedTrust`, `KickGrace`, `UnavailableReason`, `PresenceTimeout`, `TempBan.*`) are stored in the
+  settings key `gateway.options` and pushed to the gateway (`SetOptions`) without a restart; an invalid
+  set is refused whole.
+- **Bans** live in the `bans` table (address or CIDR, SteamID; permanent or until a time; admin or
+  auto). The gateway holds the whole list and drops a banned address silently, before any session.
+  Temp bans (`auto`) come from repeated handshake failures per IP and per SteamID (5 in 60 s → 10 min,
+  doubling to 24 h). Lift one on the Bans page.
+- **Restarts and the load balancer.** A carried session is keyed by the client's address as the gateway
+  sees it. On k3s, servicelb masquerades every client to the node (`10.42.0.1`), and a new gateway pod IP
+  gives the client's flow a new source port, so after a pod replacement every carried session expires
+  "never resumed" and players reconnect (measured 2026-10-04 at 8ca1a2e: carried `10.42.0.1:13681`, the
+  same client back as `10.42.0.1:52208`). A container restart in the same pod keeps the address, and so
+  does a load balancer that preserves the client address (`externalTrafficPolicy: Local` on a real one).
+  A client heard before the service's `SyncTable` still resumes its carried session (fd92fd3).
+- **The gate:** `make live-s1 TIER=fake ISOLATED=1` runs against the isolated namespace
+  `tf2-descent-iso` (client UDP 27215) with the fake Steam: validation before forward, one connection
+  per SteamID, release on leave, re-auth across an in-place gateway restart, a denied ticket, a SteamID
+  ban, and a temp ban with its lift. rc=0 fails=0 at fd92fd3
+  (`live/out/s1-fake-fd92fd3-20261004-185738.log`).
+- **Real client, real Steam (2026-10-04, isolated real tier at 95a76c9, mod image sa-154dd902, client
+  from game d0ffa666).** One client joined through the gateway; real Steam validated its ticket under the
+  gateway's anonymous logon and the hub (Steam off) saw it as `127.1.0.1`. An in-place gateway restart
+  (`kill 1`) resumed the carried session and the client re-authed through the game: resumed 03:05:03.40Z,
+  the fresh ticket's `Reauth` at 03:05:04.15Z, valid under the new logon at 03:05:05.32Z, the client
+  playing throughout. Two defects found on the way, each fixed with a fact that failed first: the relay
+  gave a resumed session a new synthetic peer, a stranger to the engine (95a76c9), and the game client
+  crashed drawing the full update after the gap (game d0ffa666).
+
 ## Local mode (D-H13)
 
 - `make local [LOCAL_DIR=bin/local]`: the real service as one process, loopback only, no

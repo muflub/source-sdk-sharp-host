@@ -51,6 +51,8 @@ public interface IReadTx
     IRulesModuleStore Modules { get; }
     ILevelClaimStore LevelClaims { get; }
     IAnchorStore Anchors { get; }
+    ISteamAuthStore SteamAuth { get; }
+    IBanStore Bans { get; }
     DateTimeOffset Now { get; }
 }
 
@@ -269,6 +271,24 @@ public interface IAuditLog
     Task Write(string action, string target, object? before = null, object? after = null, string? actor = null);
     Task<IReadOnlyList<AuditEntry>> List(AuditQuery query);
     Task<int> Count(AuditQuery query);
+}
+
+/// <summary>plan_steam_auth S-10: one row per identified session; the ticket only by hash.</summary>
+public interface ISteamAuthStore
+{
+    Task Upsert(SteamAuthRecord record);
+    Task<SteamAuthRecord?> Get(string sessionId);
+    Task<IReadOnlyList<SteamAuthRecord>> ForSteamId(string steamId);
+    Task<bool> Delete(string sessionId);
+}
+
+/// <summary>plan_steam_auth S-14: one row per (kind, value); a newer ban on the same value replaces the older.</summary>
+public interface IBanStore
+{
+    Task<BanRecord> Set(BanRecord ban);
+    Task<bool> Remove(string kind, string value);
+    /// <summary>Every ban live at <paramref name="now"/>, or every ban when null.</summary>
+    Task<IReadOnlyList<BanRecord>> List(DateTimeOffset? now = null);
 }
 
 public interface ISettingsStore

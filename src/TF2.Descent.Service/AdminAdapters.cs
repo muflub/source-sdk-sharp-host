@@ -77,11 +77,9 @@ public sealed class AdminLedger(IRulesProvider rules, MaintenanceState maintenan
 /// <summary>The admin's gateway controls (§11 Gateway page) over the control client and the registry.</summary>
 public sealed class AdminGateway(IGatewayControl control, IHostData data, ServiceOptions options, GatewayState state, TimeProvider clock) : IAdminGateway
 {
-    public const string BansKey = "gateway.bans";
-
     public async Task<AdminGatewaySnapshot> Snapshot(CancellationToken ct = default)
     {
-        var bans = await Bans(data, ct);
+        var bans = await Bans(data, clock.GetUtcNow(), ct);
         var routes = await data.ReadAsync(async (tx, _) => (await tx.Sessions.Open())
             .Select(s => new AdminRoute(s.Id, s.ClientAddr, s.SteamId, s.Backend, 0, 0, s.Opened)).ToList(), ct);
         if (control is not GatewayControlClient client || string.IsNullOrEmpty(options.Listen.GatewayControl))
@@ -91,8 +89,9 @@ public sealed class AdminGateway(IGatewayControl control, IHostData data, Servic
             var snap = await client.Snapshot(ct);
             return new AdminGatewaySnapshot(state.Reachable(clock.GetUtcNow()), null,
                 snap.Sessions.Select(s => new AdminRoute(s.SessionId, s.ClientAddr, s.Steamid.Length > 0 ? s.Steamid : null, s.Backend,
-                    s.BytesIn, s.BytesOut, DateTimeOffset.FromUnixTimeMilliseconds(s.OpenedUnixMs))).ToList(),
-                snap.AdmissionQueue, snap.ServerInfo?.Name, bans, 0, 0);
+                    s.BytesIn, s.BytesOut, DateTimeOffset.FromUnixTimeMilliseconds(s.OpenedUnixMs), s.Auth)).ToList(),
+                snap.AdmissionQueue, snap.ServerInfo?.Name, bans, 0, 0,
+                new AdminSteamState(snap.SteamMode, snap.SteamLoggedOn, snap.GsSteamid == 0 ? "" : snap.GsSteamid.ToString(), snap.SteamEpoch));
         }
         catch (Grpc.Core.RpcException e) { return new AdminGatewaySnapshot(false, e.Status.Detail, routes, 0, null, bans, 0, 0); }
     }
@@ -112,16 +111,34 @@ public sealed class AdminGateway(IGatewayControl control, IHostData data, Servic
         await control.SetRoute(s.ClientAddr, GatewayControlClient.Backend(hub, options), s.SteamId, holdUntilReady: false, ct);
     }
 
-    /// <summary>§6.1: bans are stored in the service and enforced by the gateway; the next SyncTable carries them.</summary>
+    /// <summary>§6.1 and plan_steam_auth S-14: stored in the bans table, enforced by the gateway, pushed at once.</summary>
     public async Task BanAddress(string address, string? note, CancellationToken ct = default)
     {
-        var bans = (await Bans(data, ct)).Append(address).Distinct().ToList();
-        await data.WriteAsync(async (tx, _) => { await tx.Settings.Set(BansKey, JsonSerializer.Serialize(bans), "admin@localhost"); return true; }, ct);
-        await control.SyncTable(ct);
+        if (!System.Net.IPNetwork.TryParse(address.Contains('/') ? address : address + "/32", out _))
+            throw HostRefusal.Precondition("bad_address", $"'{address}' is not an IPv4 address or CIDR range");
+        await data.WriteAsync(async (tx, _) =>
+        {
+            await tx.Bans.Set(new BanRecord("address", address, null, "admin", note ?? "", clock.GetUtcNow()));
+            return true;
+        }, ct);
+        await control.PushBans(ct);
     }
 
-    public static async Task<IReadOnlyList<string>> Bans(IHostData data, CancellationToken ct) =>
-        await data.ReadAsync(async (tx, _) => (await tx.Settings.Get(BansKey)) is { } s ? JsonSerializer.Deserialize<List<string>>(s.ValueJson) ?? [] : [], ct);
+    public Task PushBans(CancellationToken ct = default) => control.PushBans(ct);
+
+    public async Task ApplyOptions(string json, CancellationToken ct = default)
+    {
+        G.LiveOptions options;
+        try { options = Google.Protobuf.JsonParser.Default.Parse<G.LiveOptions>(json); }
+        catch (Exception e) when (e is Google.Protobuf.InvalidJsonException or Google.Protobuf.InvalidProtocolBufferException or FormatException)
+        { throw HostRefusal.Precondition("bad_options", e.Message); }
+        if (control is not GatewayControlClient client) throw HostRefusal.Precondition("no_gateway", "no gateway configured");
+        await client.ApplyOptions(options, ct);
+    }
+
+    /// <summary>The address bans live now, for the Gateway page.</summary>
+    public static async Task<IReadOnlyList<string>> Bans(IHostData data, DateTimeOffset now, CancellationToken ct) =>
+        await data.ReadAsync(async (tx, _) => (await tx.Bans.List(now)).Where(b => b.Kind == "address").Select(b => b.Value).ToList(), ct);
 
     public Task ReleasePin(string steamId, CancellationToken ct = default) =>
         throw new HostRefusal(RefusalCode.Unimplemented, "pins_in_pods", "D-H10: a player's loopback address lives in the pod's launcher and ends with the instance");

@@ -36,9 +36,22 @@ public readonly record struct HostVec3(float X, float Y, float Z);
 public sealed record HostAnchor(string Owner, string LevelId, string LevelHash, int Depth, HostVec3 Position, float Yaw, DateTimeOffset Placed);
 
 /// <summary>PlayerJoined's answer: whether to let the player in, and who the player really is (address and session).</summary>
-public sealed record PlayerJoin(bool Allowed, string Reason, string SessionId, string ClientAddr);
+public sealed record PlayerJoin(bool Allowed, string Reason, string SessionId, string ClientAddr)
+{
+    /// <summary>SDK 2.6.0: the player's SteamID as the host knows it (the gateway validated it with Steam). Use this one:
+    /// an engine running without Steam (sv_lan 1, plan_steam_auth S-7) reports no real SteamID of its own.</summary>
+    public string SteamId { get; init; } = "";
+}
 
 public enum PeerSource { Sidecar, Service }
+
+/// <summary>
+/// SDK 2.6.0 (plan_steam_auth S-18): the mod's server-browser entry, from its mods.yaml <c>browser</c> block.
+/// <see cref="Map"/> and the <see cref="Rules"/> values are templates over the world-status keys the host publishes
+/// (<c>{players}</c>, <c>{levels_open}</c>, <c>{deepest}</c>, … docs/mod-image.md); the host renders them.
+/// </summary>
+public sealed record BrowserBlock(string Name, string Description = "", string Tags = "", string Region = "", int MaxPlayers = 0,
+                                  string Map = "", IReadOnlyDictionary<string, string>? Rules = null);
 
 /// <summary>Who is behind a peer the engine sees.</summary>
 public sealed record PeerIdentity(string Peer, string ClientAddr, string SessionId, string SteamId, PeerSource Source);

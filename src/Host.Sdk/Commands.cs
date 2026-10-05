@@ -84,6 +84,58 @@ public sealed record AnchorsChangedInfo(string CommandId, string PartyId);
 /// <summary>D-H17: a store key this server can read changed (TOWN, or this level's data written by town). Read it with IHostStore.</summary>
 public sealed record StoreChangedInfo(string CommandId, HostStoreScope Scope, string Owner, string Key);
 
+/// <summary>How the host judged a ticket from <see cref="ReauthRequest.Submit"/>.</summary>
+public enum TicketOutcome { Ok, Denied, AlreadyClaimed, Timeout, Unavailable, Stale }
+
+/// <summary>
+/// SDK 2.6.0 (plan_steam_auth S-11, S-20). The gateway restarted and lost this player's Steam session; the
+/// player keeps playing meanwhile. Ask the player's client, over the game's own channel, for a fresh auth
+/// session ticket for <see cref="GameServerSteamId"/> (<c>ISteamUser::GetAuthSessionTicket</c>, cancelling the
+/// previous handle), then call <see cref="Submit"/> with the bytes before <see cref="Deadline"/>. No answer, or a
+/// ticket Steam refuses, gets the player kicked to reconnect. A later Reauth for the same player supersedes this
+/// one (its nonce is the current one, and an old nonce is answered <see cref="TicketOutcome.Stale"/>).
+/// </summary>
+public sealed class ReauthRequest
+{
+    readonly Func<byte[], Task<HostResult<TicketOutcome>>> _submit;
+
+    internal ReauthRequest(SdkCore core, string commandId, string steamId, ulong gameServerSteamId, string nonce, DateTimeOffset deadline, string peer)
+        : this(commandId, steamId, gameServerSteamId, nonce, deadline, peer, null!)
+    {
+        _submit = ticket => SubmitToHost(core, ticket);
+    }
+
+    /// <summary>A request whose <see cref="Submit"/> runs <paramref name="submit"/>: for a game's own facts, which cannot
+    /// receive a Reauth from a real host. The SDK builds hosted ones itself.</summary>
+    public ReauthRequest(string commandId, string steamId, ulong gameServerSteamId, string nonce, DateTimeOffset deadline, string peer,
+                         Func<byte[], Task<HostResult<TicketOutcome>>> submit)
+    {
+        CommandId = commandId; SteamId = steamId; GameServerSteamId = gameServerSteamId; Nonce = nonce; Deadline = deadline; Peer = peer;
+        _submit = submit;
+    }
+    public string CommandId { get; }
+    public string SteamId { get; }
+    /// <summary>The Steam game server the ticket must be minted for (the gateway's, not this process's).</summary>
+    public ulong GameServerSteamId { get; }
+    public string Nonce { get; }
+    public DateTimeOffset Deadline { get; }
+    /// <summary>The peer the engine sees for the player, as PlayerJoined was given it.</summary>
+    public string Peer { get; }
+
+    /// <summary>Sends the client's fresh ticket; the answer is Steam's verdict as the gateway saw it.</summary>
+    public Task<HostResult<TicketOutcome>> Submit(byte[] ticket) => _submit(ticket);
+
+    Task<HostResult<TicketOutcome>> SubmitToHost(SdkCore core, byte[] ticket) => core.Background(async () =>
+    {
+        var request = new P.SubmitTicketRequest
+        {
+            RequestId = Rpc.NewRequestId(), Peer = Peer, Nonce = Nonce, Ticket = Google.Protobuf.ByteString.CopyFrom(ticket),
+        };
+        var r = await core.Rpc.Call((m, d, ct) => core.Instance.SubmitTicketAsync(request, m, d, ct)).ConfigureAwait(false);
+        return r.Map(x => Enum.TryParse<TicketOutcome>(x.Outcome, out var o) ? o : TicketOutcome.Unavailable);
+    });
+}
+
 /// <summary>
 /// A same-process hop's target (D-H13 local mode): its map, and its level's .bsp/.nav3d/.map2d as
 /// absolute paths (empty for the hub, whose map ships with the mod).
@@ -104,6 +156,8 @@ public interface IHostCommands
     event Action<NextLevelInfo>? NextLevel;
     event Action<AnchorsChangedInfo>? AnchorsChanged;
     event Action<StoreChangedInfo>? StoreChanged;
+    /// <summary>SDK 2.6.0: ask the player's client for a fresh Steam ticket (<see cref="ReauthRequest"/>).</summary>
+    event Action<ReauthRequest>? Reauth;
 }
 
 internal sealed class HostCommands(SdkCore core) : IHostCommands
@@ -118,6 +172,7 @@ internal sealed class HostCommands(SdkCore core) : IHostCommands
     public event Action<NextLevelInfo>? NextLevel;
     public event Action<AnchorsChangedInfo>? AnchorsChanged;
     public event Action<StoreChangedInfo>? StoreChanged;
+    public event Action<ReauthRequest>? Reauth;
 
     /// <summary>Called on the stream's reader thread: nothing is raised here, only queued.</summary>
     public void OnCommand(P.ServerCommand c)
@@ -156,6 +211,13 @@ internal sealed class HostCommands(SdkCore core) : IHostCommands
             {
                 var s = c.StoreChanged;
                 core.Main.Post(() => StoreChanged?.Invoke(new StoreChangedInfo(id, (HostStoreScope)(int)s.Scope, s.Owner, s.Key)));
+                break;
+            }
+            case P.ServerCommand.KindOneofCase.Reauth:
+            {
+                var r = c.Reauth;
+                core.Main.Post(() => Reauth?.Invoke(new ReauthRequest(core, id, r.Steamid, r.GsSteamid, r.Nonce,
+                    DateTimeOffset.FromUnixTimeMilliseconds(r.DeadlineUnixMs), r.Peer)));
                 break;
             }
         }

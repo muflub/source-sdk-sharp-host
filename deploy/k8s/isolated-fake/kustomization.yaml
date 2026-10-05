@@ -1,0 +1,8 @@
+# TIER=fake in the isolated namespace (make … TIER=fake ISOLATED=1; see ../isolated).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tf2-descent-iso
+resources:
+  - ../local-fake
+components:
+  - ../isolated

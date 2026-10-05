@@ -53,7 +53,9 @@ public static class RelayHosting
         services.AddSingleton(clock);
         services.AddSingleton(metrics ?? new RelayMetrics());
         services.AddSingleton(sp => new PeerTable(options, clock));
-        services.AddSingleton<InterposeSwitchboard>();
+        services.AddSingleton(_ => options.SyntheticAddresses
+            ? new InterposeSwitchboard(new AddressPool(options.AddressPool, options.Quarantine, clock), options.PeerPort > 0 ? options.PeerPort : 29005)
+            : new InterposeSwitchboard());
         services.AddGrpc();
         return services;
     }

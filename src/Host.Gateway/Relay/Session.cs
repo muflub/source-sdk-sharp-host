@@ -27,7 +27,7 @@ public sealed class StreamLink(IPEndPoint backend)
 /// <summary>One client address and everything the relay keeps for it (plan §8.1).</summary>
 public sealed class Session(string id, SocketAddress clientAddress, IPEndPoint client, DateTimeOffset now)
 {
-    public string Id { get; } = id;
+    public string Id { get; set; } = id;
     /// <summary>The key the public socket's receive path looks the session up by.</summary>
     public SocketAddress ClientAddress { get; } = clientAddress;
     public IPEndPoint Client { get; } = client;
@@ -67,6 +67,37 @@ public sealed class Session(string id, SocketAddress clientAddress, IPEndPoint c
     public DateTimeOffset HoldSince { get; set; }
 
     public string State => Hold is not null ? "holding" : Link is { Open: true } ? "relaying" : "unlinked";
+
+    // ---- Steam auth (plan_steam_auth); untouched when Steam is off
+    public AuthState Auth { get; set; }
+    /// <summary>Bumped by every admission, so a verdict for an earlier one is recognised and dropped.</summary>
+    public int AuthAttempt { get; set; }
+    /// <summary>SHA-256 of the validated ticket: an equal ticket on a later connect (a hop) needs no Steam call.</summary>
+    public string? TicketHash { get; set; }
+    public string? Epoch { get; set; }
+    public string? RevokeReason { get; set; }
+    /// <summary>The SteamID an admission in progress claims: it holds the SteamID against a second connect from the
+    /// moment Steam is asked, so two simultaneous connects cannot both pass presence (S-17).</summary>
+    public ulong? PendingSteamId { get; set; }
+    /// <summary>The open request for a fresh ticket (S-11, S-20): its nonce, deadline, and how many were asked.</summary>
+    public string? ReauthNonce { get; set; }
+    public DateTimeOffset ReauthDeadline { get; set; }
+    public int ReauthAsks { get; set; }
+    /// <summary>The SteamID this session holds for presence: its own, or the one it is being admitted for.</summary>
+    public ulong? PresenceSteamId => SteamId ?? PendingSteamId;
+    public DateTimeOffset RevokedAt { get; set; }
+}
+
+public enum AuthState
+{
+    None,
+    /// <summary>A connect is held while Steam decides; nothing past getchallenge reaches the backend.</summary>
+    Validating,
+    Valid,
+    /// <summary>Carried over a gateway restart: still relaying while a fresh ticket is asked for (S-11).</summary>
+    Reauthing,
+    /// <summary>Withdrawn: upstream stopped, closed after the kick grace (S-12).</summary>
+    Revoked,
 }
 
 public enum IdentityPhase

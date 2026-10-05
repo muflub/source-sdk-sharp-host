@@ -37,7 +37,11 @@ public sealed class AdminActions(IHostData data, IRulesProvider rules, ServiceOp
     [
         "Instances.ModImage", "Instances.MaxLevelPods", "Instances.WarmSpares", "Instances.EmptyGrace", "Instances.CorpseGrace",
         "Instances.Hubs", "MapPool.DefaultPerDepth", "MapPool.PerDepth.", "MapPool.AutoActivateBakes", "Reserve.Sizes", "Reserve.LowWater",
+        // plan_steam_auth S-21: the gateway's live options, a LiveOptions as protobuf JSON, validated by the gateway.
+        GatewayOptionsKey,
     ];
+
+    public const string GatewayOptionsKey = "gateway.options";
 
     public static bool IsRuntimeSetting(string key) =>
         RuntimeSettings.Any(k => k.EndsWith('.') ? key.StartsWith(k, StringComparison.Ordinal) && key.Length > k.Length : key == k);
@@ -137,21 +141,35 @@ public sealed class AdminActions(IHostData data, IRulesProvider rules, ServiceOp
 
     // ------------------------------------------------------------------ accounts
 
-    public Task<AdminResult> BanAccount(string steamId, string? note, CancellationToken ct = default) => Tx(async tx =>
+    /// <summary>The account's flag and the bans table together (plan_steam_auth S-14); the gateway is told at once and
+    /// kicks a live session of the account.</summary>
+    public async Task<AdminResult> BanAccount(string steamId, string? note, CancellationToken ct = default)
     {
-        var a = await tx.Characters.GetAccount(steamId) ?? throw HostRefusal.NotFound("no_account", steamId);
-        await tx.Characters.SetBanned(steamId, true, note ?? a.Note);
-        await Audit(tx, "account.ban", steamId, new { a.Banned, a.Note }, new { Banned = true, Note = note ?? a.Note }, Actor);
-        return AdminResult.Done($"banned {steamId}");
-    }, ct);
+        var r = await Tx(async tx =>
+        {
+            var a = await tx.Characters.GetAccount(steamId) ?? throw HostRefusal.NotFound("no_account", steamId);
+            await tx.Characters.SetBanned(steamId, true, note ?? a.Note);
+            await tx.Bans.Set(new BanRecord("steamid", steamId, null, "admin", note ?? a.Note ?? "", tx.Now));
+            await Audit(tx, "account.ban", steamId, new { a.Banned, a.Note }, new { Banned = true, Note = note ?? a.Note }, Actor);
+            return AdminResult.Done($"banned {steamId}");
+        }, ct);
+        if (r.Ok && _c.Gateway is { } gw) await gw.PushBans(ct);
+        return r;
+    }
 
-    public Task<AdminResult> UnbanAccount(string steamId, CancellationToken ct = default) => Tx(async tx =>
+    public async Task<AdminResult> UnbanAccount(string steamId, CancellationToken ct = default)
     {
-        var a = await tx.Characters.GetAccount(steamId) ?? throw HostRefusal.NotFound("no_account", steamId);
-        await tx.Characters.SetBanned(steamId, false, a.Note);
-        await Audit(tx, "account.unban", steamId, new { a.Banned }, new { Banned = false }, Actor);
-        return AdminResult.Done($"unbanned {steamId}");
-    }, ct);
+        var r = await Tx(async tx =>
+        {
+            var a = await tx.Characters.GetAccount(steamId) ?? throw HostRefusal.NotFound("no_account", steamId);
+            await tx.Characters.SetBanned(steamId, false, a.Note);
+            await tx.Bans.Remove("steamid", steamId);
+            await Audit(tx, "account.unban", steamId, new { a.Banned }, new { Banned = false }, Actor);
+            return AdminResult.Done($"unbanned {steamId}");
+        }, ct);
+        if (r.Ok && _c.Gateway is { } gw) await gw.PushBans(ct);
+        return r;
+    }
 
     public Task<AdminResult> DeleteAccount(string steamId, CancellationToken ct = default) => Tx(async tx =>
     {
@@ -658,17 +676,64 @@ public sealed class AdminActions(IHostData data, IRulesProvider rules, ServiceOp
         ? Task.FromResult(Unavailable("backups"))
         : External("backup.restore_to_file", name, null, async () => new { path = await backups.RestoreToFile(name, ct) }, $"restored {name} to a file");
 
-    public Task<AdminResult> SetSetting(string key, string valueJson, CancellationToken ct = default)
+    public async Task<AdminResult> SetSetting(string key, string valueJson, CancellationToken ct = default)
     {
-        if (!IsRuntimeSetting(key)) return Task.FromResult(AdminResult.Refused("not_runtime", $"'{key}' is not a runtime setting"));
+        if (!IsRuntimeSetting(key)) return AdminResult.Refused("not_runtime", $"'{key}' is not a runtime setting");
         try { using var _ = JsonDocument.Parse(valueJson); }
-        catch (JsonException e) { return Task.FromResult(AdminResult.Refused("bad_json", e.Message)); }
-        return Tx(async tx =>
+        catch (JsonException e) { return AdminResult.Refused("bad_json", e.Message); }
+        if (key == GatewayOptionsKey)
+        {
+            // The gateway is the one validator (its ValidateOnStart rules): applied there first, stored only if accepted.
+            if (_c.Gateway is not { } gw) return Unavailable("the gateway control");
+            try { await gw.ApplyOptions(valueJson, ct); }
+            catch (HostRefusal e) { return AdminResult.Refused(e.Reason, e.Message); }
+        }
+        return await Tx(async tx =>
         {
             var before = await tx.Settings.Get(key);
             await tx.Settings.Set(key, valueJson, Actor);
             await Audit(tx, "config.set", key, before is null ? null : new { before.ValueJson }, new { ValueJson = valueJson }, Actor);
             return AdminResult.Done($"{key} = {valueJson}");
         }, ct);
+    }
+
+    // ------------------------------------------------------------------ bans (plan_steam_auth S-14)
+
+    static bool ValidBanValue(string kind, string value) => kind switch
+    {
+        "address" => System.Net.IPNetwork.TryParse(value.Contains('/') ? value : value + "/32", out var n)
+                     && n.BaseAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork,
+        "steamid" => ulong.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var id) && id != 0,
+        _ => false,
+    };
+
+    public async Task<AdminResult> AddBan(string kind, string value, TimeSpan? duration, string? reason, CancellationToken ct = default)
+    {
+        value = value.Trim();
+        if (!ValidBanValue(kind, value))
+            return AdminResult.Refused("bad_ban", $"'{value}' is not a valid {kind} (an IPv4 address or CIDR, or a SteamID64)");
+        if (duration is { } d && d <= TimeSpan.Zero) return AdminResult.Refused("bad_duration", "a temporary ban needs a positive duration");
+        var r = await Tx(async tx =>
+        {
+            var until = duration is { } dd ? tx.Now + dd : (DateTimeOffset?)null;
+            await tx.Bans.Set(new BanRecord(kind, value, until, "admin", reason ?? "", tx.Now));
+            await Audit(tx, "ban.add", $"{kind}:{value}", null, new { until, reason }, Actor);
+            return AdminResult.Done($"banned {kind} {value}{(until is null ? "" : $" until {until:u}")}");
+        }, ct);
+        if (r.Ok && _c.Gateway is { } gw) await gw.PushBans(ct);
+        return r;
+    }
+
+    public async Task<AdminResult> LiftBan(string kind, string value, CancellationToken ct = default)
+    {
+        var r = await Tx(async tx =>
+        {
+            if (!await tx.Bans.Remove(kind, value)) throw HostRefusal.NotFound("no_ban", $"no ban on {kind} {value}");
+            if (kind == "steamid" && await tx.Characters.GetAccount(value) is { Banned: true } a) await tx.Characters.SetBanned(value, false, a.Note);
+            await Audit(tx, "ban.lift", $"{kind}:{value}", null, null, Actor);
+            return AdminResult.Done($"lifted the ban on {kind} {value}");
+        }, ct);
+        if (r.Ok && _c.Gateway is { } gw) await gw.PushBans(ct);
+        return r;
     }
 }

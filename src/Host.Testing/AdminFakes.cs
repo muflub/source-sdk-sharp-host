@@ -97,6 +97,13 @@ public sealed class AdminFakeGateway : IAdminGateway
     public Task CloseSession(string sessionId, string reason, CancellationToken ct = default) => Record($"close:{sessionId}");
     public Task ForceToHub(string sessionId, CancellationToken ct = default) => Record($"hub:{sessionId}");
     public Task BanAddress(string address, string? note, CancellationToken ct = default) => Record($"ban:{address}");
+    public Task PushBans(CancellationToken ct = default) => Record("push-bans");
+    /// <summary>Refuses a set whose JSON contains <see cref="RefuseOptionsContaining"/>, as the gateway refuses an invalid one.</summary>
+    public string? RefuseOptionsContaining { get; set; }
+    public Task ApplyOptions(string json, CancellationToken ct = default) =>
+        RefuseOptionsContaining is { } bad && json.Contains(bad, StringComparison.Ordinal)
+            ? throw HostRefusal.Precondition("invalid_options", "the gateway refused the options")
+            : Record($"options:{json}");
     public Task ReleasePin(string steamId, CancellationToken ct = default) => Record($"unpin:{steamId}");
 }
 

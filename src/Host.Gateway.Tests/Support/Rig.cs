@@ -17,6 +17,9 @@ public sealed class RecordingEvents : IGatewayEvents
     public ConcurrentQueue<PlayerPin> Pins { get; } = new();
     public ConcurrentQueue<GatewayStats> StatsSeen { get; } = new();
     public ConcurrentQueue<IdentifyRequest> Identifies { get; } = new();
+    public ConcurrentQueue<AuthRevokedEvent> Revocations { get; } = new();
+    public ConcurrentQueue<ReauthNeededEvent> Reauths { get; } = new();
+    public ConcurrentQueue<TempBannedEvent> TempBans { get; } = new();
     public Func<IdentifyRequest, Task<IdentifyResponse>> OnIdentify { get; set; } =
         _ => Task.FromResult(new IdentifyResponse { Allowed = true });
 
@@ -30,6 +33,10 @@ public sealed class RecordingEvents : IGatewayEvents
         Identifies.Enqueue(request);
         return OnIdentify(request);
     }
+
+    public void AuthRevoked(AuthRevokedEvent e) => Revocations.Enqueue(e);
+    public void ReauthNeeded(ReauthNeededEvent e) => Reauths.Enqueue(e);
+    public void TempBanned(TempBannedEvent e) => TempBans.Enqueue(e);
 
     public IReadOnlyList<SessionEvent> Of(string kind) => Sessions.Where(x => x.Kind == kind).Select(x => x.Event).ToList();
 }
@@ -46,7 +53,16 @@ public sealed class Rig : IAsyncDisposable
     readonly List<Pod> _pods = [];
     ulong _version;
 
-    public Rig(Action<GatewayOptions>? configure = null, Func<FakeTimeProvider, IGatewayEvents>? events = null)
+    /// <summary>The fake Steam, when the rig was made with <see cref="WithSteam"/>.</summary>
+    public SourceSharp.Host.Gateway.Steam.FakeSteamBackend? SteamBackend { get; private set; }
+    public SourceSharp.Host.Gateway.Steam.FakeSteamAuthServer? Steam { get; private set; }
+
+    /// <summary>A rig whose relay validates every connect with a logged-on fake Steam (plan_steam_auth), on the toy wire.</summary>
+    public static Rig WithSteam(Action<GatewayOptions>? configure = null, SourceSharp.Host.Gateway.Steam.FakeSteamBackend? backend = null) =>
+        new(o => { o.Wire = "Toy"; configure?.Invoke(o); }, steamBackend: backend ?? new SourceSharp.Host.Gateway.Steam.FakeSteamBackend());
+
+    public Rig(Action<GatewayOptions>? configure = null, Func<FakeTimeProvider, IGatewayEvents>? events = null,
+               SourceSharp.Host.Gateway.Steam.FakeSteamBackend? steamBackend = null)
     {
         Options = new GatewayOptions
         {
@@ -55,7 +71,14 @@ public sealed class Rig : IAsyncDisposable
             HandshakesPerSecond = 1000,
         };
         configure?.Invoke(Options);
-        Relay = new GatewayRelay(Options, Time, events?.Invoke(Time) ?? Events, metrics: new GatewayMetrics(Prometheus.Metrics.NewCustomRegistry()));
+        if (steamBackend is not null)
+        {
+            SteamBackend = steamBackend;
+            Steam = new SourceSharp.Host.Gateway.Steam.FakeSteamAuthServer(steamBackend, Time);
+            Steam.StartAsync(default).GetAwaiter().GetResult();
+        }
+        Relay = new GatewayRelay(Options, Time, events?.Invoke(Time) ?? Events, metrics: new GatewayMetrics(Prometheus.Metrics.NewCustomRegistry()),
+                                 steam: Steam);
         Relay.Start();
     }
 

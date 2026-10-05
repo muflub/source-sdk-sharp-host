@@ -9,8 +9,11 @@ namespace SourceSharp.Host.LiveDriver;
 
 /// <summary>
 /// live/*.sh's hands (TIER=fake):
-///   clients &lt;gateway ip:port&gt; &lt;steamid,…&gt; &lt;seconds&gt; &lt;status.json&gt;
-///       connect each fake client through the gateway, follow retries, rewrite status.json every second
+///   clients &lt;gateway ip:port&gt; &lt;steamid[:tail],…&gt; &lt;seconds&gt; &lt;status.json&gt;
+///       connect each fake client through the gateway, follow retries, rewrite status.json every second;
+///       ":tail" goes after the SteamID in the toy ticket (plan_steam_auth: "deny:&lt;why&gt;" makes the fake Steam refuse it)
+///   attempts &lt;gateway ip:port&gt; &lt;steamid[:tail]&gt; &lt;count&gt; &lt;out.json&gt;
+///       one client handshakes &lt;count&gt; times in a row, each to its answer; out.json lists them
 ///   ctl &lt;fake ip:port&gt; &lt;Method&gt; ['&lt;request json&gt;']
 ///       one FakeGameControl call; the reply as JSON on stdout
 /// </summary>
@@ -24,6 +27,7 @@ public static class Program
             {
                 "clients" when args.Length == 5 => await Clients(IPEndPoint.Parse(args[1]), args[2].Split(','), int.Parse(args[3]), args[4]),
                 "ctl" when args.Length is 3 or 4 => await Ctl(args[1], args[2], args.Length == 4 ? args[3] : "{}"),
+                "attempts" when args.Length == 5 => await Attempts(IPEndPoint.Parse(args[1]), args[2], int.Parse(args[3]), args[4]),
                 _ => Usage(),
             };
         }
@@ -42,8 +46,7 @@ public static class Program
 
     static async Task<int> Clients(IPEndPoint gateway, string[] steamIds, int seconds, string statusFile)
     {
-        var clients = steamIds.Select(id => new SourceSharp.Host.FakeClient.FakeClient(gateway, ulong.Parse(id), $"live-{id[^4..]}", IPAddress.Any)
-            { ResendInterval = TimeSpan.FromSeconds(1) }).ToList();
+        var clients = steamIds.Select(id => Make(id, TimeSpan.FromSeconds(1))(gateway)).ToList();
         foreach (var c in clients)
         {
             try { await c.ConnectAsync(TimeSpan.FromSeconds(20)); }
@@ -57,7 +60,7 @@ public static class Program
             var status = clients.Select(c => new
             {
                 steamid = c.SteamId.ToString(), connected = c.Connected, instance = c.InstanceId, retries = c.Retries,
-                local = c.LocalEndPoint.ToString(), reject = c.RejectReason, steps = c.Steps.TakeLast(6),
+                local = c.LocalEndPoint.ToString(), reject = c.RejectReason, steps = c.Steps.TakeLast(6), reauths = c.ReauthsAnswered,
             });
             var tmp = statusFile + ".tmp";
             await File.WriteAllTextAsync(tmp, JsonSerializer.Serialize(status));
@@ -65,6 +68,31 @@ public static class Program
             await Task.Delay(1000);
         }
         foreach (var c in clients) c.Dispose();
+        return 0;
+    }
+
+    /// <summary>"steamid[:tail]": the client, with the tail after the SteamID in its toy ticket.</summary>
+    static Func<IPEndPoint, SourceSharp.Host.FakeClient.FakeClient> Make(string spec, TimeSpan resend)
+    {
+        var colon = spec.IndexOf(':');
+        var id = colon < 0 ? spec : spec[..colon];
+        var tail = colon < 0 ? [] : System.Text.Encoding.ASCII.GetBytes(spec[(colon + 1)..]);
+        return gw => new SourceSharp.Host.FakeClient.FakeClient(gw, ulong.Parse(id), $"live-{id[^4..]}", IPAddress.Any) { TicketTail = tail, ResendInterval = resend };
+    }
+
+    static async Task<int> Attempts(IPEndPoint gateway, string spec, int count, string outFile)
+    {
+        using var c = Make(spec, TimeSpan.FromSeconds(1))(gateway);
+        var results = new List<object>();
+        for (var i = 0; i < count; i++)
+        {
+            string outcome;
+            try { outcome = "connected " + await c.ConnectAsync(TimeSpan.FromSeconds(5)); }
+            catch (InvalidOperationException e) { outcome = e.Message; }  // "rejected: <reason>"
+            catch (TimeoutException) { outcome = "no answer"; }
+            results.Add(new { attempt = i + 1, outcome });
+        }
+        await File.WriteAllTextAsync(outFile, JsonSerializer.Serialize(results));
         return 0;
     }
 

@@ -40,6 +40,18 @@ public sealed class GatewayControlService(GatewayRelay relay) : GatewayControl.G
     public override Task<ControlAck> BackendReady(BackendReadyRequest request, ServerCallContext context) =>
         Task.FromResult(Ack(relay.BackendReady(request.Version, request.Backend, request.Ready), "BackendReady"));
 
+    public override Task<ControlAck> SetBans(SetBansRequest request, ServerCallContext context) =>
+        Task.FromResult(Ack(relay.SetBans(request.Version, request.Bans), "SetBans"));
+
+    public override Task<ControlAck> SetOptions(SetOptionsRequest request, ServerCallContext context) =>
+        Task.FromResult(Ack(relay.SetOptions(request.Version, request.Options ?? new LiveOptions()), "SetOptions"));
+
+    public override Task<ControlAck> EndAuth(EndAuthRequest request, ServerCallContext context) =>
+        Task.FromResult(Ack(relay.EndAuth(request.SessionId), "EndAuth"));
+
+    public override Task<ReauthResponse> Reauth(ReauthRequest request, ServerCallContext context) =>
+        relay.ReauthAsync(request.SessionId, request.Nonce, request.Ticket.ToByteArray());
+
     public override Task<ControlAck> SetServerInfo(ServerInfo request, ServerCallContext context)
     {
         relay.SetServerInfo(request);
@@ -48,7 +60,12 @@ public sealed class GatewayControlService(GatewayRelay relay) : GatewayControl.G
 
     public override Task<GatewaySnapshot> Snapshot(SnapshotRequest request, ServerCallContext context)
     {
-        var s = new GatewaySnapshot { TableVersion = relay.TableVersion, AdmissionQueue = relay.HoldingSessions };
+        var (mode, steam) = relay.SteamState;
+        var s = new GatewaySnapshot
+        {
+            TableVersion = relay.TableVersion, AdmissionQueue = relay.HoldingSessions,
+            SteamMode = mode.ToString(), SteamLoggedOn = steam.LoggedOn, GsSteamid = steam.GameServerSteamId, SteamEpoch = steam.Epoch,
+        };
         s.Sessions.AddRange(relay.Snapshot());
         if (relay.ServerInfo is { } info) s.ServerInfo = info;
         return Task.FromResult(s);

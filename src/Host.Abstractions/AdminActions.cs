@@ -85,6 +85,10 @@ public interface IAdminActions
     Task<AdminResult> CloseSession(string sessionId, CancellationToken ct = default);
     Task<AdminResult> ForceToHub(string sessionId, CancellationToken ct = default);
     Task<AdminResult> BanAddress(string address, string? note, CancellationToken ct = default);
+    /// <summary>plan_steam_auth S-14: a ban by "address" (IPv4 or CIDR) or "steamid"; <paramref name="duration"/> null is permanent.
+    /// Stored, audited, and pushed to the gateway, which kicks what it now covers.</summary>
+    Task<AdminResult> AddBan(string kind, string value, TimeSpan? duration, string? reason, CancellationToken ct = default);
+    Task<AdminResult> LiftBan(string kind, string value, CancellationToken ct = default);
     Task<AdminResult> ReleasePin(string steamId, CancellationToken ct = default);
 
     // ---- map pool

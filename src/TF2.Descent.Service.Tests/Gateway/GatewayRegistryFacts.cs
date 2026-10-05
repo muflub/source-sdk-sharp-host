@@ -19,6 +19,27 @@ public sealed class RecordingGatewayControl : IGatewayControl
     public Task SetDefault(string backend, CancellationToken ct = default) { Calls.Add($"default {backend}"); TableVersion++; return Task.CompletedTask; }
     public Task BackendReady(string backend, bool ready, CancellationToken ct = default) { Calls.Add($"ready {backend} {ready}"); TableVersion++; return Task.CompletedTask; }
     public Task SyncTable(CancellationToken ct = default) { Syncs++; return Task.CompletedTask; }
+    public Task PushBans(CancellationToken ct = default) { Calls.Add("bans"); return Task.CompletedTask; }
+    public Task PushOptions(CancellationToken ct = default) { Calls.Add("options"); return Task.CompletedTask; }
+    public Task EndAuth(string sessionId, CancellationToken ct = default) { Calls.Add($"endauth {sessionId}"); return Task.CompletedTask; }
+    public List<G.ServerInfo> ServerInfos { get; } = [];
+    public Task SetServerInfo(G.ServerInfo info, CancellationToken ct = default) { ServerInfos.Add(info.Clone()); return Task.CompletedTask; }
+    public Func<string, string, byte[], G.ReauthResponse> OnReauth { get; set; } =
+        (_, _, _) => new G.ReauthResponse { Outcome = "Ok", TicketSha256 = new string('c', 64), Epoch = "e2", GsSteamid = 90071992547409921UL };
+    public Task<G.ReauthResponse> Reauth(string sessionId, string nonce, byte[] ticket, CancellationToken ct = default)
+    { Calls.Add($"reauth {sessionId} {nonce} {ticket.Length}"); return Task.FromResult(OnReauth(sessionId, nonce, ticket)); }
+}
+
+/// <summary>Records the commands sent to instances (plan_steam_auth S-12: kicks).</summary>
+public sealed class RecordingCommands : IInstanceCommands
+{
+    public List<(string Instance, InstanceCommand Command)> Sent { get; } = [];
+    public bool Reachable { get; set; } = true;
+    public Task<bool> Send(string instanceId, InstanceCommand command, CancellationToken ct = default)
+    {
+        Sent.Add((instanceId, command));
+        return Task.FromResult(Reachable);
+    }
 }
 
 /// <summary>Plan §8.2 and 7e: the service's session registry.</summary>
@@ -26,10 +47,17 @@ public class GatewayRegistryFacts
 {
     static async Task<(LedgerHarness H, GatewayRegistry R, RecordingGatewayControl C)> Registry()
     {
+        var (h, r, c, _) = await RegistryWithCommands();
+        return (h, r, c);
+    }
+
+    internal static async Task<(LedgerHarness H, GatewayRegistry R, RecordingGatewayControl C, RecordingCommands K)> RegistryWithCommands()
+    {
         var h = await LedgerHarness.Create();
         var control = new RecordingGatewayControl();
-        var registry = new GatewayRegistry(h.D.Data, control, h.Options, h.D.Clock, NullLogger<GatewayRegistry>.Instance);
-        return (h, registry, control);
+        var commands = new RecordingCommands();
+        var registry = new GatewayRegistry(h.D.Data, control, commands, h.Options, h.D.Clock, NullLogger<GatewayRegistry>.Instance);
+        return (h, registry, control, commands);
     }
 
     // LedgerHarness instances have PodIp 10.42.0.9; the relay port is 5010 by default.

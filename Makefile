@@ -11,7 +11,10 @@ SOURCE_SHARP_ROOT ?= ../source-sdk-sharp
 
 KUBECONFIG_FILE ?= $(CURDIR)/local-k3s.yaml
 KUBECTL       ?= KUBECONFIG=$(KUBECONFIG_FILE) kubectl
-NAMESPACE     ?= tf2-descent
+# ISOLATED=1: a separate copy in tf2-descent-iso, beside tf2-descent and touching none of it
+# (deploy/k8s/isolated: client UDP on 27215, fastdl on 5204).
+ISOLATED      ?=
+NAMESPACE     ?= $(if $(ISOLATED),tf2-descent-iso,tf2-descent)
 REGISTRY      ?= localhost:30500
 TAG           ?= $(shell git rev-parse --short HEAD)
 IMAGE_TOOL    ?= podman
@@ -21,6 +24,7 @@ MOD_NAME      ?= tf2_descent
 # The 64-bit libraries anonymous 244310 lacks (plan D-H11): a directory whose bin/linux64/ holds them.
 # Default: the local Steam install of app 243750. Production: a licensed source (docs/ops.md).
 ENGINE_FILES  ?= $(HOME)/.steam/steam/steamapps/common/Source SDK Base 2013 Multiplayer
+STEAMWORKS_SDK ?= $(HOME)/Downloads/sdk
 
 TEST_ENV      := MSBUILDDISABLENODEREUSE=1
 SLN           := Host.slnx
@@ -28,7 +32,7 @@ SLN           := Host.slnx
 .PHONY: setup build test check bench pack publish clean run local gateway fake \
         images image-service image-gateway image-engine image-fake \
         cluster-up cluster-down deploy undeploy admin logs mod-image-dev \
-        bake live-h0 live-h4 live-h5 live-h6 live-h7 live-h9 maptools-clean
+        bake live-h0 live-h4 live-h5 live-h6 live-h7 live-h9 live-s1 maptools-clean
 
 setup:
 	@if [ ! -d "$(MAPTOOLS_ROOT)/.git" ]; then git clone "$(MAPTOOLS_REPO)" "$(MAPTOOLS_ROOT)"; fi
@@ -92,12 +96,22 @@ bake:
 images: image-service image-gateway image-engine image-fake
 # The service is this game's (tf2-descent-service); the gateway and the fake are generic (sourcesharp-*).
 image-service: IMAGE_NAME = tf2-descent-service
-image-gateway image-fake: IMAGE_NAME = sourcesharp-$*
-image-service image-gateway image-fake: image-%:
+image-fake: IMAGE_NAME = sourcesharp-$*
+image-service image-fake: image-%:
 	@root=$$(sed -n 's#.*<MapToolsRoot>\(.*\)</MapToolsRoot>.*#\1#p' roots.props); \
 	$(IMAGE_TOOL) build -f deploy/Dockerfile.$* --build-context maptools="$$root" \
 	  --build-arg BUILD_VERSION=$(TAG) -t $(REGISTRY)/$(IMAGE_NAME):$(TAG) .
 	$(IMAGE_TOOL) push --tls-verify=false $(REGISTRY)/$(IMAGE_NAME):$(TAG)
+
+# The gateway carries the Steam game server (plan_steam_auth S-1): STEAMWORKS_SDK is the Steamworks SDK's
+# root (its redistributable_bin/linux64/libsteam_api.so goes in the image). Never committed here.
+image-gateway:
+	@root=$$(sed -n 's#.*<MapToolsRoot>\(.*\)</MapToolsRoot>.*#\1#p' roots.props); \
+	[ -f "$(STEAMWORKS_SDK)/redistributable_bin/linux64/libsteam_api.so" ] || { echo "STEAMWORKS_SDK=$(STEAMWORKS_SDK) has no redistributable_bin/linux64/libsteam_api.so (the Steamworks SDK root; docs/ops.md)"; exit 1; }; \
+	$(IMAGE_TOOL) build -f deploy/Dockerfile.gateway --build-context maptools="$$root" \
+	  --build-context steamworks="$(STEAMWORKS_SDK)" \
+	  --build-arg BUILD_VERSION=$(TAG) -t $(REGISTRY)/sourcesharp-gateway:$(TAG) .
+	$(IMAGE_TOOL) push --tls-verify=false $(REGISTRY)/sourcesharp-gateway:$(TAG)
 
 image-engine:
 	@root=$$(sed -n 's#.*<MapToolsRoot>\(.*\)</MapToolsRoot>.*#\1#p' roots.props); \
@@ -115,7 +129,7 @@ cluster-up:
 	deploy/cluster-up.sh "$(KUBECONFIG_FILE)" "$(NAMESPACE)" "$(MOD_IMAGE)" "$(TIER)"
 cluster-down:
 	$(KUBECTL) delete namespace $(NAMESPACE) --wait=true
-OVERLAY       := deploy/k8s/$(if $(filter fake,$(TIER)),local-fake,local)
+OVERLAY       := deploy/k8s/$(if $(ISOLATED),isolated-$(if $(filter fake,$(TIER)),fake,real),$(if $(filter fake,$(TIER)),local-fake,local))
 CONTENT_PATH  ?= $(HOME)/.steam/steam/steamapps/common/Team Fortress 2
 # One apply: the manifests and, with MOD_IMAGE, the ConfigMap the service reads it from. A second
 # step (`set env`, as before) rolled the service twice, and the first pod could create a hub with
@@ -143,7 +157,7 @@ admin:
 logs:
 	$(KUBECTL) -n $(NAMESPACE) logs -f statefulset/tf2-descent-service
 
-live-h0 live-h4 live-h5 live-h6 live-h7 live-h9: live-%:
+live-h0 live-h4 live-h5 live-h6 live-h7 live-h9 live-s1: live-%:
 	TIER=$(TIER) KUBECONFIG=$(KUBECONFIG_FILE) NAMESPACE=$(NAMESPACE) live/$*.sh
 
 clean:

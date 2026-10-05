@@ -16,6 +16,12 @@ public interface IGatewayEvents
     void PinAssigned(PlayerPin pin);
     void Stats(GatewayStats stats);
     Task<IdentifyResponse> IdentifyAsync(IdentifyRequest request, CancellationToken ct);
+    /// <summary>A session's auth was withdrawn or a ban now covers it (plan_steam_auth S-12).</summary>
+    void AuthRevoked(AuthRevokedEvent e);
+    /// <summary>A carried session needs a fresh ticket from its client (S-11, S-20).</summary>
+    void ReauthNeeded(ReauthNeededEvent e);
+    /// <summary>This gateway issued a temp ban (S-15).</summary>
+    void TempBanned(TempBannedEvent e);
 }
 
 /// <summary>No service: every event is dropped and every Identify is allowed to the default route.</summary>
@@ -29,4 +35,7 @@ public sealed class NullGatewayEvents : IGatewayEvents
     public void Stats(GatewayStats stats) { }
     public Task<IdentifyResponse> IdentifyAsync(IdentifyRequest request, CancellationToken ct) =>
         Task.FromResult(new IdentifyResponse { Allowed = true });
+    public void AuthRevoked(AuthRevokedEvent e) { }
+    public void ReauthNeeded(ReauthNeededEvent e) { }
+    public void TempBanned(TempBannedEvent e) { }
 }

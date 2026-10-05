@@ -30,6 +30,8 @@ public sealed class HostDbContext(DbContextOptions<HostDbContext> options) : DbC
     internal DbSet<RulesModuleRow> RulesModules => Set<RulesModuleRow>();
     internal DbSet<LevelClaimRow> LevelClaims => Set<LevelClaimRow>();
     internal DbSet<AnchorRow> Anchors => Set<AnchorRow>();
+    internal DbSet<SteamAuthRow> SteamAuth => Set<SteamAuthRow>();
+    internal DbSet<BanRow> Bans => Set<BanRow>();
 
     /// <summary>Unix milliseconds: SQLite can order and compare them, DateTimeOffset text it cannot.</summary>
     sealed class UnixMs() : ValueConverter<DateTimeOffset, long>(v => v.ToUnixTimeMilliseconds(), v => DateTimeOffset.FromUnixTimeMilliseconds(v));
@@ -92,6 +94,8 @@ public sealed class HostDbContext(DbContextOptions<HostDbContext> options) : DbC
         m.Entity<RulesModuleRow>(e => { e.ToTable("rules_modules"); e.HasKey(x => x.Sha256); });
         m.Entity<LevelClaimRow>(e => { e.ToTable("character_levels"); e.HasKey(x => new { x.CharacterId, x.Depth }); e.HasIndex(x => x.LevelId); });
         m.Entity<AnchorRow>(e => { e.ToTable("anchors"); e.HasKey(x => x.CharacterId); e.HasIndex(x => x.LevelId); });
+        m.Entity<SteamAuthRow>(e => { e.ToTable("steam_auth"); e.HasKey(x => x.SessionId); e.HasIndex(x => x.SteamId); });
+        m.Entity<BanRow>(e => { e.ToTable("bans"); e.HasKey(x => new { x.Kind, x.Value }); e.HasIndex(x => x.Until); });
 
         // snake_case columns, as §4.1 names them.
         foreach (var entity in m.Model.GetEntityTypes())

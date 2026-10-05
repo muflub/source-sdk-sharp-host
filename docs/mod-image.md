@@ -20,6 +20,39 @@ recorded on its `instances` row.
 | `/bin/sh` and `cp` | a shell and coreutils (`cp`, `mkdir`, `chmod`) | the init container copies `/game` onto the game volume, then makes `mods/<Mod.Name>/pool/` exist with mode 0755 (the level overlay mounts at `pool/maps` and the game's user must enter `pool/`); a `busybox` base is enough. Don't ship `pool/`; if you do, it is set to 0755 (178bfc1 shipped it 0744 and no level loaded) |
 | label `org.sourcesharp.mod=<Mod.Name>` | the mod the image is for | the service refuses to create a pod from an image whose label differs |
 
+### The `browser` block (plan_steam_auth S-18)
+
+The server-browser entry (A2S answers and the Steam listing) comes from the mod, not from this repo: a
+`browser` block in the mod's `mods.yaml` entry, which `source# -resolve` carries into
+`mod.dedicated.yaml`, and which the game server hands the SDK before `Booting` (docs/sdk-integration.md §4):
+
+```yaml
+browser:
+  name: "Descent ({levels_open} open)"   # template
+  description: "TF2 Descent"             # the product / game description; template
+  tags: "rpg,coop,deepest{deepest}"      # template
+  region: "eu"
+  max_players: 0                         # 0 = the host's capacity
+  map: "depth {deepest}"                 # template; empty = {hub_map}
+  rules:                                 # key -> template, shown as server rules
+    players_by_level: "{players_by_level}"
+```
+
+The world-status keys the host publishes, rendered every second and pushed when they change:
+
+| key | value |
+|---|---|
+| `{hub_map}` | the town's map (`Mod.TownMap`) |
+| `{players}` | players connected across every instance |
+| `{max_players}` | the hub's slots plus each live level's |
+| `{levels_open}` | live level instances |
+| `{deepest}` | the deepest live level's depth (0 when none) |
+| `{players_by_level}` | `depth:players` per live level, space-separated |
+| `{pool_ready}` | pre-generated levels ready to hand out |
+
+A key not in this table refuses `Booting` (a typo fails at boot, never renders blank). Without a block
+the entry is the mod's name and its town.
+
 The rules module the host replays with is **not** read from this image: the game
 server's SDK announces it at first connect and uploads it only if the host asks
 (D-H9).

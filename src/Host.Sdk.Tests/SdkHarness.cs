@@ -201,6 +201,16 @@ public sealed class RecordingSessions : IPlayerSessions
         Left.Enqueue((peer, steamId));
         return Task.CompletedTask;
     }
+
+    /// <summary>plan_steam_auth S-20: every submitted ticket, answered by <see cref="TicketOutcome"/>.</summary>
+    public ConcurrentQueue<(string Peer, string Nonce, byte[] Ticket)> Tickets { get; } = new();
+    public string TicketOutcome { get; set; } = "Ok";
+
+    public Task<P.SubmitTicketResponse> SubmitTicket(InstanceRecord caller, string peer, string nonce, byte[] ticket, CancellationToken ct)
+    {
+        Tickets.Enqueue((peer, nonce, ticket));
+        return Task.FromResult(new P.SubmitTicketResponse { Outcome = TicketOutcome });
+    }
 }
 
 /// <summary>Travel's HopReady listener as a recorder; at each HopReady it reads the watched character's version, for ordering facts.</summary>

@@ -105,6 +105,20 @@ public sealed record RulesModuleRecord(
 
 public sealed record Setting(string Key, string ValueJson, string UpdatedBy, DateTimeOffset UpdatedAt);
 
+/// <summary>
+/// A session's Steam verdict (plan_steam_auth S-10): which ticket (by hash; the bytes are never stored), which
+/// game-server logon validated it (<see cref="Epoch"/>), and when. Deleted when the session closes.
+/// </summary>
+public sealed record SteamAuthRecord(string SessionId, string SteamId, string TicketSha256, ulong GsSteamId, string Epoch,
+                                     string State, DateTimeOffset ValidatedAt);
+
+/// <summary>A ban the gateway enforces (S-14): <see cref="Kind"/> "address" (IPv4 or CIDR) or "steamid";
+/// <see cref="Until"/> null is permanent; <see cref="Source"/> "admin" or "auto" (a temp ban, S-15).</summary>
+public sealed record BanRecord(string Kind, string Value, DateTimeOffset? Until, string Source, string Reason, DateTimeOffset Created)
+{
+    public bool LiveAt(DateTimeOffset now) => Until is null || Until > now;
+}
+
 /// <summary>D-H12: a character's sticky level for a depth, for its session; D-H18: a level copy (<see cref="LevelIds"/>).</summary>
 public sealed record LevelClaim(string CharacterId, int Depth, string LevelId, DateTimeOffset Since, DateTimeOffset LastUsed)
 {

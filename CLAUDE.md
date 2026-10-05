@@ -83,6 +83,12 @@ make pack                          Host.Sdk + Host.Contracts as NuGet packages i
   items are `bytes` + `schema_version`, decoded by the rules module's own
   codecs on both sides. A breaking proto change bumps the SDK and contract
   versions together.
+- **Every package drop gets a new version.** Before `make pack` for anyone
+  else, bump `HostSdk.Version` and `<Version>` in `Host.Sdk.csproj` (and
+  `Host.Contracts` when it changed), e.g. 2.6.1 or a prerelease like
+  2.6.0-sa.2, and send the consumer the number. Never repack a changed
+  build under a version already handed over: consumers keep the cached
+  package, and a forgotten cache delete silently builds against the old SDK.
 - The admin endpoint binds loopback only and `ValidateOnStart` refuses any
   other address; the public surface is UDP `27015` and the fastdl listener
   that serves `*.bsp.bz2` and nothing else. `.nav3d` and `.map2d` never leave

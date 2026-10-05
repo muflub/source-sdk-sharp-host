@@ -27,7 +27,14 @@ public sealed class E2eWorld : IAsyncDisposable
     public static readonly TimeSpan T = TimeSpan.FromSeconds(30);
 
     public required WebApplication Service { get; init; }
-    public required WebApplication Gateway { get; init; }
+    public required WebApplication Gateway { get; set; }
+    /// <summary>The gateway's settings, kept so <see cref="RestartGatewayAsync"/> builds the same one again.</summary>
+    Dictionary<string, string?> _gatewaySettings = [];
+    /// <summary>plan_steam_auth: the fake Steam's memory of claimed tickets, shared across gateway restarts as Steam's is.</summary>
+    public SourceSharp.Host.Gateway.Steam.FakeSteamBackend? SteamBackend { get; private set; }
+    public GatewayRelay Relay => Gateway.Services.GetRequiredService<GatewayRelay>();
+    public SourceSharp.Host.Gateway.Steam.FakeSteamAuthServer? Steam =>
+        Gateway.Services.GetRequiredService<SteamHolder>().Server as SourceSharp.Host.Gateway.Steam.FakeSteamAuthServer;
     public required FakeGameInstanceHost Pods { get; init; }
     public required IPEndPoint Public { get; init; }
     public required string ModulesDir { get; init; }
@@ -39,28 +46,12 @@ public sealed class E2eWorld : IAsyncDisposable
     readonly List<GrpcChannel> _channels = [];
     long _packId;
 
-    /// <summary>
-    /// The game API, gateway API and gateway control ports must be fixed before the start (pods are
-    /// told the service's address, the gateway and the service each dial the other), so they are
-    /// picked free and released, and something else can take one before Kestrel binds it. A bind
-    /// that fails with "address already in use" tears down what started and starts again on fresh ports.
-    /// </summary>
-    /// <param name="pickPort">Picks each fixed port (the facts' seam for a port taken before the bind).</param>
-    public static async Task<E2eWorld> Start(Dictionary<string, string?>? settings = null, Func<int>? pickPort = null)
+    /// <param name="steam">plan_steam_auth: the gateway validates with the fake Steam on the toy wire, on a fixed public port.</param>
+    public static async Task<E2eWorld> Start(Dictionary<string, string?>? settings = null, bool steam = false)
     {
-        pickPort ??= TestService.FreePort;
-        for (var attempt = 1; ; attempt++)
-        {
-            try { return await StartOnce(settings, pickPort); }
-            catch (IOException e) when (attempt < 5 && e.InnerException is Microsoft.AspNetCore.Connections.AddressInUseException) { }
-        }
-    }
-
-    static async Task<E2eWorld> StartOnce(Dictionary<string, string?>? settings, Func<int> pickPort)
-    {
-        var gameApi = pickPort();
-        var gatewayApi = pickPort();
-        var gatewayControl = pickPort();
+        var gameApi = TestService.FreePort();
+        var gatewayApi = TestService.FreePort();
+        var gatewayControl = TestService.FreePort();
         var modules = Directory.CreateTempSubdirectory("e2e-modules-").FullName;
         var pods = new FakeGameInstanceHost();
         pods.ExtraEnv["FAKEGAME_HeartbeatMs"] = "200";
@@ -96,36 +87,54 @@ public sealed class E2eWorld : IAsyncDisposable
             b.Services.AddSingleton<IInstanceHost>(pods);
             b.Services.AddSingleton<IHopListener>(sp => new CheckingHops(sp.GetRequiredService<TravelCoordinator>(), sp.GetRequiredService<IHostData>()));
         });
-        var gateway = GatewayApp.Build(["--environment", "Development"], b => b.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        await service.StartAsync();
+
+        var gatewaySettings = new Dictionary<string, string?>
         {
-            ["GatewayId"] = "gw-e2e", ["Public"] = "127.0.0.1:0", ["Control"] = $"{TestService.Loopback}:{gatewayControl}", ["Health"] = "127.0.0.1:0",
+            ["GatewayId"] = "gw-e2e", ["Public"] = steam ? $"{TestService.Loopback}:{TestService.FreePort()}" : "127.0.0.1:0",
+            ["Control"] = $"{TestService.Loopback}:{gatewayControl}", ["Health"] = "127.0.0.1:0",
             ["Service"] = $"http://{TestService.Loopback}:{gatewayApi}", ["HandshakesPerSecond"] = "1000", ["PingInterval"] = "00:00:00.500",
             ["Serilog:MinimumLevel:Default"] = "Warning",
-        }));
-        try
+        };
+        gatewaySettings["Steam:Mode"] = "Off"; // no libsteam_api in a test process
+        if (steam)
         {
-            await service.StartAsync();
-            await gateway.StartAsync();
+            gatewaySettings["Wire"] = "Toy";
+            gatewaySettings["Steam:Mode"] = "Fake";
+            gatewaySettings["Steam:ReauthTimeout"] = "00:00:05";
         }
-        catch (IOException)
-        {
-            // A port was taken: stop whatever started (the manager may already have created the hub's pod).
-            await gateway.DisposeAsync();
-            await pods.DisposeAsync();
-            try { await service.StopAsync(); } catch (Exception) { }
-            await service.DisposeAsync();
-            try { Directory.Delete(modules, true); } catch (IOException) { }
-            throw;
-        }
+        var backend = steam ? new SourceSharp.Host.Gateway.Steam.FakeSteamBackend() : null;
+        var gateway = BuildGateway(gatewaySettings, backend);
+        await gateway.StartAsync();
         var world = new E2eWorld
         {
             Service = service, Gateway = gateway, Pods = pods, ModulesDir = modules,
             Public = gateway.Services.GetRequiredService<GatewayRelay>().PublicEndPoint,
         };
+        world._gatewaySettings = gatewaySettings;
+        world.SteamBackend = backend;
         await world.Until(async () => (await world.Hub()) is { State: InstanceState.Live }, "the hub live");
         var relay = gateway.Services.GetRequiredService<GatewayRelay>();
         await world.Until(async () => relay.DefaultBackend?.ToString() == $"{(await world.Hub())!.PodIp}:5010", $"the gateway's default route to the hub (has {relay.DefaultBackend})");
         return world;
+    }
+
+    static WebApplication BuildGateway(Dictionary<string, string?> settings, SourceSharp.Host.Gateway.Steam.FakeSteamBackend? backend) =>
+        GatewayApp.Build(["--environment", "Development"], b =>
+        {
+            b.Configuration.AddInMemoryCollection(settings);
+            if (backend is not null) b.Services.AddSingleton(backend);
+        });
+
+    /// <summary>A gateway rollout: this one stops, a new one starts on the same public port and syncs from the service.</summary>
+    public async Task RestartGatewayAsync()
+    {
+        await Gateway.StopAsync();
+        await Gateway.DisposeAsync();
+        Gateway = BuildGateway(_gatewaySettings, SteamBackend);
+        await Gateway.StartAsync();
+        var hub = (await Hub())!;
+        await Until(() => Task.FromResult(Relay.DefaultBackend?.ToString() == $"{hub.PodIp}:5010"), "the restarted gateway's table");
     }
 
     // ------------------------------------------------------------------ reading the world

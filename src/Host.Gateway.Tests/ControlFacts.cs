@@ -261,7 +261,7 @@ public class HealthFacts
         await using var events = new GrpcGatewayEvents(svc.EventsClient, time);
         var relay = new GatewayRelay(o, time, events);
         var health = new GatewayHealthClient(svc.HealthClient, () => (relay.TableVersion, relay.SessionCount), o.GatewayId, Ping, time);
-        var worker = new GatewayWorker(relay, health, events);
+        var worker = new GatewayWorker(relay, health, events, new SteamHolder(null));
         await worker.StartAsync(CancellationToken.None);
         await using var hub = new Pod("hub");
         Assert.Equal(ControlStatus.Ok, relay.SetDefault(1, hub.EndPoint.ToString()));

@@ -19,6 +19,7 @@ else if (!Snap.Reachable)
 else
 {
     <p id="gw-state">routes @Snap.Routes.Count · admission queue @Snap.AdmissionQueue · pins @Snap.PinPoolUsed / @Snap.PinPoolSize · A2S: <code>@Snap.A2S</code></p>
+    <p id="gw-steam">Steam: @SteamLine(Snap.Steam)</p>
 }
 <div class="bar">
     <input id="ban-address" placeholder="address to ban" @bind="BanTarget" />
@@ -47,10 +48,10 @@ else
 
 <h2>Routes (the gateway's table)</h2>
 <table id="routes">
-    <tr><th>session</th><th>client</th><th>SteamID</th><th>backend</th><th>since</th></tr>
+    <tr><th>session</th><th>client</th><th>SteamID</th><th>auth</th><th>backend</th><th>since</th></tr>
     @foreach (var r in Snap?.Routes ?? [])
     {
-        <tr><td>@r.SessionId</td><td>@r.ClientAddr</td><td>@r.SteamId</td><td>@r.Backend</td><td>@Age(r.Since, Now)</td></tr>
+        <tr id="route-@r.SessionId"><td>@r.SessionId</td><td>@r.ClientAddr</td><td>@r.SteamId</td><td class="auth">@r.Auth</td><td>@r.Backend</td><td>@Age(r.Since, Now)</td></tr>
     }
 </table>
 
@@ -80,6 +81,14 @@ else
 
     void AskClose(SessionRecord s) => Ask($"Close session {s.Id}", new { s.State }, new { State = "closed" }, () => Actions.CloseSession(s.Id));
     void AskUnpin(PlayerPin p) => Ask($"Release {p.SteamId}'s pin", new { p.PinnedPeer }, null, () => Actions.ReleasePin(p.SteamId));
+
+    /// <summary>plan_steam_auth: off, logged on as which game server and logon, or the reason new connects are refused.</summary>
+    public static string SteamLine(AdminSteamState? s) => s switch
+    {
+        null or { Mode: "" or "Off" } => "off (no validation)",
+        { LoggedOn: true } => $"{s.Mode}, logged on as {s.GameServerSteamId} (logon {s.Epoch})",
+        _ => $"{s.Mode}, NOT logged on: new connects are refused",
+    };
 
     static string HostOf(string addr) => System.Net.IPEndPoint.TryParse(addr, out var ep) ? ep.Address.ToString() : addr;
 

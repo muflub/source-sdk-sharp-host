@@ -143,6 +143,54 @@ public sealed class EntrypointFacts : IDisposable
         Assert.DoesNotContain("launched", r.Out);
     }
 
+    /// <summary>plan_steam_auth S-18: the browser block as source# -resolve writes it (the game's byte-for-byte shape), last.</summary>
+    const string Browser = """
+        browser:
+          name: "TF2 Descent ({levels_open} levels open)"
+          description: "TF2 Descent"
+          tags: "rpg,coop,descent,deepest{deepest}"
+          region: ""
+          max_players: 0
+          map: "depth {deepest}"
+          rules:
+            players_by_level: "{players_by_level}"
+            pool_ready: "{pool_ready}"
+
+        """;
+
+    [Fact]
+    public void A_browser_block_is_skipped_and_changes_neither_args_nor_env()
+    {
+        Settings(Sample);
+        var without = Run("+map", "m");
+        Settings(Sample + Browser);
+        var with = Run("+map", "m");
+        Assert.True(without.Exit == 0, without.Err);
+        Assert.True(with.Exit == 0, with.Err);
+        Assert.Equal(Args(without.Out), Args(with.Out));
+        Assert.Equal(without.Out.Where(l => l.StartsWith("env:", StringComparison.Ordinal)), with.Out.Where(l => l.StartsWith("env:", StringComparison.Ordinal)));
+        Assert.Contains("launched", with.Out);
+    }
+
+    [Theory]
+    [InlineData("browser: {}\n")]
+    [InlineData("browser:\n  name: \"x\"\n  rules: {}\n")]
+    public void An_empty_browser_block_or_empty_rules_start(string block)
+    {
+        Settings(Sample + block);
+        var r = Run();
+        Assert.True(r.Exit == 0, r.Err);
+    }
+
+    [Fact]
+    public void An_unknown_key_after_a_browser_block_still_refuses_to_start()
+    {
+        Settings(Sample + Browser + "workers: 4\n");
+        var r = Run();
+        Assert.Equal(65, r.Exit);
+        Assert.DoesNotContain("launched", r.Out);
+    }
+
     [Fact]
     public void A_bad_environment_name_refuses_to_start()
     {

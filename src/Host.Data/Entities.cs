@@ -353,3 +353,26 @@ internal sealed class AnchorRow
     public DateTimeOffset Placed { get; set; }
     public AnchorRecord ToRecord() => new(CharacterId, LevelId, Depth, X, Y, Z, Yaw, Placed);
 }
+
+internal sealed class SteamAuthRow
+{
+    public string SessionId { get; set; } = "";
+    public string SteamId { get; set; } = "";
+    public string TicketSha256 { get; set; } = "";
+    public ulong GsSteamId { get; set; }
+    public string Epoch { get; set; } = "";
+    public string State { get; set; } = "";
+    public DateTimeOffset ValidatedAt { get; set; }
+    public SteamAuthRecord ToRecord() => new(SessionId, SteamId, TicketSha256, GsSteamId, Epoch, State, ValidatedAt);
+}
+
+internal sealed class BanRow
+{
+    public string Kind { get; set; } = "";
+    public string Value { get; set; } = "";
+    public DateTimeOffset? Until { get; set; }
+    public string Source { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public DateTimeOffset Created { get; set; }
+    public BanRecord ToRecord() => new(Kind, Value, Until, Source, Reason, Created);
+}

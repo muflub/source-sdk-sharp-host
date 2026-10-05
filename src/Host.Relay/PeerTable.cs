@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 
@@ -32,51 +31,20 @@ public sealed class PeerTable
     readonly Lock _sync = new();
     readonly Dictionary<IPAddress, PeerLease> _live = [];
     readonly Dictionary<ulong, PeerLease> _liveBySteam = [];
-    readonly Dictionary<ulong, IPAddress> _remembered = [];
-    readonly Dictionary<IPAddress, ulong> _owner = [];
-    readonly Dictionary<IPAddress, (DateTimeOffset Until, ulong? SteamId, string SessionId)> _quarantine = [];
-    readonly uint _first, _size;
-    uint _cursor;
+    readonly AddressPool _pool;
 
     public PeerTable(RelayOptions options, TimeProvider time)
     {
         options.Validate();
         _o = options;
         _time = time;
-        var n = IPNetwork.Parse(options.AddressPool);
-        _first = ToUInt(n.BaseAddress);
-        _size = 1u << (32 - n.PrefixLength);
+        _pool = new AddressPool(options.AddressPool, options.Quarantine, time);
     }
-
-    static uint ToUInt(IPAddress a)
-    {
-        Span<byte> b = stackalloc byte[4];
-        a.TryWriteBytes(b, out _);
-        return BinaryPrimitives.ReadUInt32BigEndian(b);
-    }
-
-    static IPAddress ToAddress(uint v)
-    {
-        var b = new byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(b, v);
-        return new IPAddress(b);
-    }
-
-    bool InPool(IPAddress a) => a.AddressFamily == AddressFamily.InterNetwork && ToUInt(a) - _first < _size;
 
     public int LiveCount { get { lock (_sync) return _live.Count; } }
 
     /// <summary>The address a SteamID had on this instance, if it has had one.</summary>
-    public IPAddress? RememberedFor(ulong steamId) { lock (_sync) return _remembered.GetValueOrDefault(steamId); }
-
-    bool Free(IPAddress a, ulong? steamId, string sessionId)
-    {
-        if (_live.ContainsKey(a)) return false;
-        if (_owner.TryGetValue(a, out var owner) && owner != steamId) return false; // another player's address here
-        if (!_quarantine.TryGetValue(a, out var q)) return true;
-        if (q.Until <= _time.GetUtcNow()) { _quarantine.Remove(a); return true; }
-        return (steamId is not null && q.SteamId == steamId) || q.SessionId == sessionId;
-    }
+    public IPAddress? RememberedFor(ulong steamId) { lock (_sync) return _pool.RememberedFor(steamId); }
 
     /// <summary>
     /// Takes an address for a new stream and binds a socket there. A live lease for the same SteamID
@@ -94,43 +62,22 @@ public sealed class PeerTable
                 ReleaseLocked(old);
                 old.Cut.Cancel();
             }
-
-            // A returning player's address first, then a restarted gateway's hint, then the pool in order.
-            if (steamId is { } s1 && _remembered.TryGetValue(s1, out var mine) && TryTake(mine, _o.PeerPort, sessionId, clientAddr, steamId) is { } back)
-                return (back, old);
-            if (hint is not null && InPool(hint.Address) && TryTake(hint.Address, hint.Port, sessionId, clientAddr, steamId) is { } hinted)
-                return (hinted, old);
-            for (uint i = 0; i < _size; i++)
-            {
-                var v = _first + (_cursor + i) % _size;
-                if ((v & 0xFF) is 0 or 255) continue;
-                var a = ToAddress(v);
-                if (TryTake(a, _o.PeerPort, sessionId, clientAddr, steamId) is { } lease)
-                {
-                    _cursor = (v - _first + 1) % _size;
-                    return (lease, old);
-                }
-            }
-            throw new InvalidOperationException($"no free address in {_o.AddressPool}");
+            // A returning player's address first, then a restarted gateway's hint (its port too), then the pool in order.
+            var lease = _pool.Take(sessionId, steamId, hint?.Address,
+                a => Bind(a, hint is not null && a.Equals(hint.Address) ? hint.Port : _o.PeerPort, sessionId, clientAddr, steamId))
+                ?? throw new InvalidOperationException($"no free address in {_o.AddressPool}");
+            return (lease, old);
         }
     }
 
-    PeerLease? TryTake(IPAddress a, int port, string sessionId, string clientAddr, ulong? steamId)
+    PeerLease? Bind(IPAddress a, int port, string sessionId, string clientAddr, ulong? steamId)
     {
-        if (!Free(a, steamId, sessionId)) return null;
         var sock = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try { sock.Bind(new IPEndPoint(a, port)); }
         catch (SocketException) { sock.Dispose(); return null; } // taken outside this table
         var lease = new PeerLease(sock, (IPEndPoint)sock.LocalEndPoint!, sessionId, clientAddr, steamId, _time.GetUtcNow());
         _live[a] = lease;
-        _quarantine.Remove(a);
-        if (steamId is { } sid)
-        {
-            _liveBySteam[sid] = lease;
-            if (_remembered.TryGetValue(sid, out var prev) && !prev.Equals(a)) _owner.Remove(prev);
-            _remembered[sid] = a;
-            _owner[a] = sid;
-        }
+        if (steamId is { } sid) _liveBySteam[sid] = lease;
         return lease;
     }
 
@@ -147,7 +94,7 @@ public sealed class PeerTable
         {
             _live.Remove(a);
             if (lease.SteamId is { } sid && _liveBySteam.TryGetValue(sid, out var s) && s == lease) _liveBySteam.Remove(sid);
-            _quarantine[a] = (_time.GetUtcNow() + _o.Quarantine, lease.SteamId, lease.SessionId);
+            _pool.Release(a, lease.SteamId, lease.SessionId);
         }
         lease.Socket.Dispose();
     }

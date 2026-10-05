@@ -26,6 +26,20 @@ public class NetworkPolicyFacts
                 (((YamlScalarNode)p["protocol"]).Value!, p.Children.ContainsKey("port") ? ((YamlScalarNode)p["port"]).Value : null))
             : [("ANY", null)];
 
+    /// <summary>plan_steam_auth S-6: a game pod can reach nothing on the internet, so its engine can reach no Steam.</summary>
+    [Fact]
+    public void Game_pods_reach_only_the_service_and_dns()
+    {
+        var egress = Rules("egress").ToList();
+        Assert.Equal(2, egress.Count);
+        var service = egress.Single(r => r.Children.ContainsKey("to"));
+        Assert.Equal("tf2-descent-service",
+            ((YamlScalarNode)((YamlMappingNode)((YamlMappingNode)((YamlMappingNode)((YamlSequenceNode)service["to"])[0])["podSelector"])["matchLabels"])["app"]).Value);
+        Assert.Equal([("TCP", "5001"), ("TCP", "5000")], Ports(service));
+        var dns = egress.Single(r => !r.Children.ContainsKey("to"));
+        Assert.Equal([("UDP", "53"), ("TCP", "53")], Ports(dns));
+    }
+
     [Fact]
     public void Gateway_reaches_only_the_sidecar_relay_port()
     {

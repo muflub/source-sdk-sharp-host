@@ -34,6 +34,16 @@ public sealed class FakeClient : IDisposable
     public string Name { get; }
     /// <summary>Send an unreadable ticket in connect (the identity-first fallback, §8.1b).</summary>
     public bool UnreadableTicket { get; init; }
+    /// <summary>Bytes after the SteamID in the toy ticket. Change it to mint a "fresh" ticket; <c>deny:&lt;reason&gt;</c> makes
+    /// the fake Steam refuse it (plan_steam_auth S-16).</summary>
+    public byte[] TicketTail { get; set; } = [];
+    /// <summary>Answer the game's request for a fresh ticket (plan_steam_auth S-20); false plays an old client.</summary>
+    public bool AnswersReauth { get; set; } = true;
+    /// <summary>The tail of the next fresh ticket; null mints a new one each time ("reauth:&lt;n&gt;").</summary>
+    public byte[]? ReauthTicketTail { get; set; }
+    /// <summary>How many fresh tickets this client sent.</summary>
+    public int ReauthsAnswered => _reauths;
+    int _reauths;
     /// <summary>How long to wait for an answer before re-sending the current handshake packet; infinite = never.</summary>
     public TimeSpan ResendInterval { get; init; } = Timeout.InfiniteTimeSpan;
 
@@ -173,7 +183,7 @@ public sealed class FakeClient : IDisposable
     }
 
     byte[] Connect() => ToyWire.ConnectPacket(_challenge,
-        UnreadableTicket ? ToyWire.UnreadableTicket() : ToyWire.Ticket(SteamId), Name);
+        UnreadableTicket ? ToyWire.UnreadableTicket() : ToyWire.Ticket(SteamId, TicketTail), Name);
 
     async Task ReceiveLoop()
     {
@@ -237,6 +247,15 @@ public sealed class FakeClient : IDisposable
                         TaskCompletionSource<string>? e;
                         lock (_sync) e = ToyWire.SeqOf(p) == _echoFor ? _echo : null;
                         e?.TrySetResult(id);
+                        return;
+                    }
+                    case ToyWire.Data when ToyWire.TryReadReauthAsk(p, out var nonce):
+                    {
+                        if (!AnswersReauth) return;
+                        var n = Interlocked.Increment(ref _reauths);
+                        var tail = ReauthTicketTail ?? [.. TicketTail, .. System.Text.Encoding.ASCII.GetBytes($"reauth:{n}")];
+                        _steps.Enqueue("reauth");
+                        _socket.SendTo(ToyWire.TicketAnswerPacket(nonce, ToyWire.Ticket(SteamId, tail)), _server);
                         return;
                     }
                     case ToyWire.Retry:

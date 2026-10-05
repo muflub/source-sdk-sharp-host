@@ -10,6 +10,7 @@ namespace SourceSharp.Host.Abstractions;
 public sealed class ServiceOptions
 {
     public ModOptions Mod { get; set; } = new();
+    public BrowserOptions Browser { get; set; } = new();
     public ListenOptions Listen { get; set; } = new();
     public InstanceOptions Instances { get; set; } = new();
     public LeaseOptions Lease { get; set; } = new();
@@ -39,6 +40,14 @@ public sealed class TravelOptions
 {
     /// <summary>D-H12: a character's level claims end after this long without a lease anywhere.</summary>
     public TimeSpan SessionIdle { get; set; } = TimeSpan.FromMinutes(30);
+}
+
+/// <summary>plan_steam_auth S-18: the server-browser entry the service renders from the mod's browser block.</summary>
+public sealed class BrowserOptions
+{
+    /// <summary>How often the world status is rendered; pushed only when it changed.</summary>
+    public TimeSpan PushInterval { get; set; } = TimeSpan.FromSeconds(1);
+    public uint AppId { get; set; } = 243750;
 }
 
 public sealed class ModOptions
@@ -117,6 +126,14 @@ public sealed class InstanceOptions
     /// <summary>The dedicated-server flag set (§7.1), owned here so the sharp repo can change it without a release.</summary>
     public List<string> Args { get; set; } =
         ["-nohltv", "+tv_enable", "0", "-devapi", "-devapisocket", "-condebug", "-nomessagebox", "-nocrashdialog", "-assertlog"];
+    /// <summary>
+    /// plan_steam_auth S-6: the engine runs without Steam. The gateway validated every player, the launcher shows
+    /// the engine a per-player loopback address (RELAY_InterposeAddresses = Synthetic), and these arguments go
+    /// after <see cref="Args"/>. The rate pins (sv_maxrate, sv_minrate, sv_maxupdaterate) join them once S0a has
+    /// measured what sv_lan 1 does to the effective values.
+    /// </summary>
+    public bool SteamOff { get; set; } = true;
+    public List<string> SteamOffArgs { get; set; } = ["+sv_lan", "1"];
     public PodResources LevelResources { get; set; } = new();
     public PodResources HubResources { get; set; } = new() { CpuRequest = "2", CpuLimit = "2", MemoryRequest = "3Gi", MemoryLimit = "3Gi" };
     public int Hubs { get; set; } = 1;

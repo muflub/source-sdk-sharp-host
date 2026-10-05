@@ -1,7 +1,19 @@
 # syntax=docker/dockerfile:1
 # Host.Gateway, published on the ASP.NET runtime image. Build with
-#   podman build -f deploy/Dockerfile.gateway --build-context maptools=$(MapToolsRoot) .
+#   podman build -f deploy/Dockerfile.gateway --build-context maptools=$(MapToolsRoot) \
+#     --build-context steamworks=$(STEAMWORKS_SDK) .
 # (make image-gateway). No game files, no ssmap executable: the map tools are an assembly.
+# The Steam game server runs in the gateway (plan_steam_auth S-1): libsteam_api.so comes from the
+# Steamworks SDK's redistributable (a build context, never committed) and steamclient.so from steamcmd.
+
+# 1. steamclient.so, which the game-server API loads from ~/.steam/sdk64. Anonymous steamcmd updates
+#    itself on first run and then ships linux64/steamclient.so; the run is retried as the engine's is.
+FROM docker.io/steamcmd/steamcmd:debian AS steam
+RUN for i in 1 2 3 4 5; do steamcmd +login anonymous +quit && break; echo "steamcmd attempt $i failed"; sleep 10; done; \
+    mkdir -p /opt/steamclient \
+ && cp "$(find / -xdev -path '*linux64/steamclient.so' -print -quit)" /opt/steamclient/steamclient.so \
+ && test -s /opt/steamclient/steamclient.so
+
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS build
 # Never name a build arg VERSION: RUN sees it as an environment variable, MSBuild
 # reads that as $(Version), and a git sha there makes NuGet restore fail without
@@ -24,5 +36,10 @@ ARG BUILD_VERSION=0.0.0-dev
 LABEL org.opencontainers.image.version=$BUILD_VERSION
 WORKDIR /app
 COPY --from=build /out /app
+# The Steamworks redistributable, next to the gateway (SteamNativeApi probes the app directory).
+COPY --from=steamworks redistributable_bin/linux64/libsteam_api.so /app/libsteam_api.so
+# steamclient.so where the game-server API looks for it, for root and for the image's app user.
+COPY --from=steam /opt/steamclient/steamclient.so /root/.steam/sdk64/steamclient.so
+COPY --from=steam /opt/steamclient/steamclient.so /home/app/.steam/sdk64/steamclient.so
 ENV DOTNET_gcServer=0
 ENTRYPOINT ["dotnet", "/app/SourceSharp.Host.Gateway.dll"]

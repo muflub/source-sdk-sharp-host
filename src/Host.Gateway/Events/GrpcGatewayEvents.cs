@@ -48,6 +48,9 @@ public sealed class GrpcGatewayEvents : IGatewayEvents, IAsyncDisposable
     public void SessionMoved(SessionEvent e) => Enqueue("SessionMoved", ct => _client.SessionMovedAsync(Stamp(e), Opts(ct)).ResponseAsync);
     public void PinAssigned(PlayerPin pin) => Enqueue("PinAssigned", ct => _client.PinAssignedAsync(Stamp(pin), Opts(ct)).ResponseAsync);
     public void Stats(GatewayStats stats) => Enqueue("Stats", ct => _client.StatsAsync(stats, Opts(ct)).ResponseAsync);
+    public void AuthRevoked(AuthRevokedEvent e) => Enqueue("AuthRevoked", ct => _client.AuthRevokedAsync(Stamp(e), Opts(ct)).ResponseAsync);
+    public void ReauthNeeded(ReauthNeededEvent e) => Enqueue("ReauthNeeded", ct => _client.ReauthNeededAsync(Stamp(e), Opts(ct)).ResponseAsync);
+    public void TempBanned(TempBannedEvent e) => Enqueue("TempBanned", ct => _client.TempBannedAsync(Stamp(e), Opts(ct)).ResponseAsync);
 
     /// <summary>Awaited by the identity-first handshake: three attempts with the same request_id.</summary>
     public async Task<IdentifyResponse> IdentifyAsync(IdentifyRequest request, CancellationToken ct)
@@ -66,6 +69,9 @@ public sealed class GrpcGatewayEvents : IGatewayEvents, IAsyncDisposable
 
     static SessionEvent Stamp(SessionEvent e) { if (string.IsNullOrEmpty(e.RequestId)) e.RequestId = Guid.NewGuid().ToString("N"); return e; }
     static PlayerPin Stamp(PlayerPin p) { if (string.IsNullOrEmpty(p.RequestId)) p.RequestId = Guid.NewGuid().ToString("N"); return p; }
+    static AuthRevokedEvent Stamp(AuthRevokedEvent e) { if (string.IsNullOrEmpty(e.RequestId)) e.RequestId = Guid.NewGuid().ToString("N"); return e; }
+    static ReauthNeededEvent Stamp(ReauthNeededEvent e) { if (string.IsNullOrEmpty(e.RequestId)) e.RequestId = Guid.NewGuid().ToString("N"); return e; }
+    static TempBannedEvent Stamp(TempBannedEvent e) { if (string.IsNullOrEmpty(e.RequestId)) e.RequestId = Guid.NewGuid().ToString("N"); return e; }
 
     CallOptions Opts(CancellationToken ct) => new(deadline: DateTime.UtcNow + CallTimeout, cancellationToken: ct);
 

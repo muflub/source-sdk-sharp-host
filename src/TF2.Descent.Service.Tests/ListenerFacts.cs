@@ -82,6 +82,22 @@ public class ListenerFacts
         Assert.Equal(HttpStatusCode.NotFound, (await svc.Http(ListenerRole.Internal).GetAsync("/ops/items/totals")).StatusCode);
     }
 
+    [Fact]
+    public async Task Ops_bans_add_list_and_lift_on_the_admin_listener_only()
+    {
+        await using var svc = await TestService.StartAsync();
+        var admin = svc.Http(ListenerRole.Admin);
+
+        var added = await admin.PostAsync("/ops/bans?kind=address&value=203.0.113.7&minutes=10&reason=gate", null);
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        Assert.Contains("203.0.113.7", await admin.GetStringAsync("/ops/bans"));
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync("/ops/bans?kind=address&value=not-an-ip", null)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync("/ops/bans?kind=address&value=203.0.113.7")).StatusCode);
+        Assert.Equal("[]", await admin.GetStringAsync("/ops/bans"));
+        Assert.Equal(HttpStatusCode.NotFound, (await svc.Http(ListenerRole.Internal).GetAsync("/ops/bans")).StatusCode);
+    }
+
     sealed class FailingReporter : SourceSharp.Host.Abstractions.IHealthReporter
     {
         public Task<SourceSharp.Host.Abstractions.HealthItem> CheckAsync(CancellationToken ct) =>

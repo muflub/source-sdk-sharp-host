@@ -5,11 +5,15 @@ using System.Net.Sockets;
 
 namespace SourceSharp.Host.Relay;
 
-/// <summary>One relayed client in Interpose mode: the engine sees its real address.</summary>
-public sealed class InterposeSession(IPEndPoint client, string sessionId, ulong? steamId, DateTimeOffset opened, Func<byte[], bool> down)
+/// <summary>One relayed client in Interpose mode.</summary>
+public sealed class InterposeSession(IPEndPoint client, IPEndPoint engine, string sessionId, ulong? steamId, DateTimeOffset opened, Func<byte[], bool> down)
 {
+    /// <summary>The client's real address.</summary>
     public IPEndPoint Client { get; } = client;
-    public ulong Key { get; } = InterposeSwitchboard.KeyOf(client);
+    /// <summary>What the engine sees: the real address, or this player's synthetic loopback one so the engine can
+    /// run with <c>sv_lan 1</c> and no Steam of its own (plan_steam_auth S-6 B).</summary>
+    public IPEndPoint Engine { get; } = engine;
+    public ulong Key { get; } = InterposeSwitchboard.KeyOf(engine);
     public string SessionId { get; } = sessionId;
     public ulong? SteamId { get; } = steamId;
     public DateTimeOffset Opened { get; } = opened;
@@ -26,9 +30,13 @@ public sealed class InterposeSession(IPEndPoint client, string sessionId, ulong?
 /// that client's stream. Lock-free on the datagram path (the engine's threads call it) and never
 /// blocking; addresses are keyed as (IPv4, port) without allocation.
 /// </summary>
-public sealed class InterposeSwitchboard
+public sealed class InterposeSwitchboard(AddressPool? synthetic = null, int syntheticPort = 29005)
 {
+    /// <summary>Keyed by what the engine sees (<see cref="InterposeSession.Engine"/>).</summary>
     readonly ConcurrentDictionary<ulong, InterposeSession> _live = new();
+    /// <summary>Keyed by the real client address.</summary>
+    readonly ConcurrentDictionary<ulong, InterposeSession> _byClient = new();
+    readonly Lock _poolSync = new();
     readonly ConcurrentDictionary<ulong, InterposeSession> _bySteam = new();
     readonly ConcurrentQueue<(ulong From, byte[] Payload)> _toEngine = new();
 
@@ -56,34 +64,45 @@ public sealed class InterposeSwitchboard
     /// <summary>
     /// Registers a stream. A live session with the same client address or SteamID is cut first
     /// (single presence per instance, as in Loopback mode) and returned.
+    /// <paramref name="hint"/> is the peer the gateway carried for this session: the address the engine
+    /// already knows it by, taken again when the pool allows.
     /// </summary>
-    public (InterposeSession Session, InterposeSession? Superseded) Register(IPEndPoint client, string sessionId, ulong? steamId, DateTimeOffset now, Func<byte[], bool> down)
+    public (InterposeSession Session, InterposeSession? Superseded) Register(IPEndPoint client, string sessionId, ulong? steamId, DateTimeOffset now, Func<byte[], bool> down,
+        IPEndPoint? hint = null)
     {
-        var s = new InterposeSession(client, sessionId, steamId, now, down);
         InterposeSession? old = null;
         if (steamId is { } sid && _bySteam.TryGetValue(sid, out var bySteam)) old = bySteam;
-        else if (_live.TryGetValue(s.Key, out var byAddr)) old = byAddr;
+        else if (_byClient.TryGetValue(KeyOf(client), out var byAddr)) old = byAddr;
         if (old is not null)
         {
             old.CutReason = "superseded";
             Unregister(old);
             old.Cut.Cancel();
         }
+        var engine = client;
+        if (synthetic is not null)
+            lock (_poolSync)
+                engine = synthetic.Take(sessionId, steamId, hint?.Address, a => new IPEndPoint(a, syntheticPort))
+                         ?? throw new InvalidOperationException("no free synthetic address for the engine");
+        var s = new InterposeSession(client, engine, sessionId, steamId, now, down);
         _live[s.Key] = s;
+        _byClient[KeyOf(client)] = s;
         if (steamId is { } k) _bySteam[k] = s;
         return (s, old);
     }
 
     public void Unregister(InterposeSession s)
     {
-        _live.TryRemove(new KeyValuePair<ulong, InterposeSession>(s.Key, s));
+        if (_live.TryRemove(new KeyValuePair<ulong, InterposeSession>(s.Key, s)) && synthetic is not null)
+            lock (_poolSync) synthetic.Release(s.Engine.Address, s.SteamId, s.SessionId);
+        _byClient.TryRemove(new KeyValuePair<ulong, InterposeSession>(KeyOf(s.Client), s));
         if (s.SteamId is { } sid) _bySteam.TryRemove(new KeyValuePair<ulong, InterposeSession>(sid, s));
     }
 
     /// <summary>A datagram a client sent (up its stream): queued for the engine's next recvfrom.</summary>
     public void FromClient(InterposeSession s, ReadOnlySpan<byte> payload) => _toEngine.Enqueue((s.Key, payload.ToArray()));
 
-    /// <summary>The engine's next datagram and the real client address it came from.</summary>
+    /// <summary>The engine's next datagram and the address it came from, as the engine sees it.</summary>
     public bool TryTakeForEngine(out ulong from, out byte[] payload)
     {
         if (_toEngine.TryDequeue(out var d)) { from = d.From; payload = d.Payload; return true; }
@@ -91,13 +110,13 @@ public sealed class InterposeSwitchboard
         return false;
     }
 
-    /// <summary>The engine sent to (addr, port): down that client's stream if it is a live session.</summary>
+    /// <summary>The engine sent to (addr, port), an address it saw: down that client's stream if it is a live session.</summary>
     public bool ToClient(ulong key, ReadOnlySpan<byte> data) =>
         _live.TryGetValue(key, out var s) && s.Down(data.ToArray());
 
     public InterposeSession? Resolve(IPEndPoint peer) =>
         peer.AddressFamily == AddressFamily.InterNetwork && _live.TryGetValue(KeyOf(peer), out var s) ? s
-        : peer.Port == 0 ? _live.Values.FirstOrDefault(x => x.Client.Address.Equals(peer.Address)) : null;
+        : peer.Port == 0 ? _live.Values.FirstOrDefault(x => x.Engine.Address.Equals(peer.Address)) : null;
 
     public IReadOnlyList<InterposeSession> Live => [.. _live.Values];
 

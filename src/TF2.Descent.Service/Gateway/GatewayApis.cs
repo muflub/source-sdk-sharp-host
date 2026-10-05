@@ -57,6 +57,15 @@ public sealed class GatewayEventsApi(GatewayRegistry registry, IHostData data, I
     public override Task<G.EventAck> PinAssigned(G.PlayerPin request, ServerCallContext context) =>
         Task.FromResult(new G.EventAck { TableVersion = (ulong)control.TableVersion });
 
+    public override Task<G.EventAck> AuthRevoked(G.AuthRevokedEvent request, ServerCallContext context) =>
+        Once(request.RequestId, () => registry.AuthRevoked(request, context.CancellationToken), context.CancellationToken);
+
+    public override Task<G.EventAck> ReauthNeeded(G.ReauthNeededEvent request, ServerCallContext context) =>
+        Once(request.RequestId, () => registry.ReauthNeeded(request, context.CancellationToken), context.CancellationToken);
+
+    public override Task<G.EventAck> TempBanned(G.TempBannedEvent request, ServerCallContext context) =>
+        Once(request.RequestId, () => registry.TempBanned(request, context.CancellationToken), context.CancellationToken);
+
     public override Task<G.EventAck> Stats(G.GatewayStats request, ServerCallContext context)
     {
         state.LastStats = request;

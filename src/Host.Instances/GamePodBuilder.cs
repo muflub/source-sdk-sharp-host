@@ -69,6 +69,7 @@ public static class GamePodBuilder
         List<string> args =
         [
             .. o.Args,
+            .. (o.SteamOff ? o.SteamOffArgs : []),
             "-game", modDir, "-console", "-port", row.ExpectedPort.ToString(), "-ip", "0.0.0.0",
             "+maxplayers", (hub ? o.HubMaxPlayers : o.LevelMaxPlayers).ToString(),
             // Before +map: the client reads the download url when it connects to the level.
@@ -95,6 +96,8 @@ public static class GamePodBuilder
                 new EnvVar("RELAY_Health", $"0.0.0.0:{o.HealthPort}"),
                 new EnvVar("RELAY_EngineEndpoint", $"127.0.0.1:{row.ExpectedPort}"),
                 new EnvVar("RELAY_Mode", o.RelayMode),
+                // plan_steam_auth S-6 B: with Steam off the engine must see reserved addresses (sv_lan 1).
+                new EnvVar("RELAY_InterposeAddresses", o.SteamOff ? "Synthetic" : "Real"),
                 .. o.ExtraEnv.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => new EnvVar(kv.Key, kv.Value)),
                 new EnvVar("TMPDIR", "/tmp/game"),
                 new EnvVar("SOURCESHARP_DEVAPI_DIR", "/tmp/devapi"),

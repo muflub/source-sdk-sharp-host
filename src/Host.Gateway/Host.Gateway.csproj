@@ -5,6 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="../Host.Abstractions/Host.Abstractions.csproj" />
     <ProjectReference Include="../Host.Proto/Host.Proto.csproj" />
+    <ProjectReference Include="../Host.Steam/Host.Steam.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Grpc.AspNetCore" />

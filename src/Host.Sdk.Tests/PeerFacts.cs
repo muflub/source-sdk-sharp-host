@@ -80,10 +80,12 @@ public class PeerFacts
         await h.Instance("hub-1", InstanceKind.Hub);
         var sdk = h.Sdk("hub-1");
         await sdk.Pumped(sdk.Session.PlayerJoined("127.0.4.2:27005", "7656"));
+        // SDK 2.6.0: the join itself asks who the peer is (no sidecar here, so the service once); the cache answers after.
+        Assert.Equal(1, h.Sessions.Resolves);
         var r = await sdk.Pumped(sdk.Peers.Resolve("127.0.4.2:27005"));
-        Assert.Equal(("203.0.113.7:27005", 0), (r.Value.ClientAddr, h.Sessions.Resolves));
+        Assert.Equal(("203.0.113.7:27005", 1), (r.Value.ClientAddr, h.Sessions.Resolves));
         await sdk.Pumped(sdk.Session.PlayerLeft("7656", "127.0.4.2:27005"));
         var after = await sdk.Pumped(sdk.Peers.Resolve("127.0.4.2:27005"));
-        Assert.Equal(("unknown_peer", 1), (after.Refusal!.Reason, h.Sessions.Resolves));
+        Assert.Equal(("unknown_peer", 2), (after.Refusal!.Reason, h.Sessions.Resolves));
     }
 }

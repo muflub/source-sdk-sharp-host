@@ -53,6 +53,33 @@ public static class OpsEndpoints
         ops.MapGet("/sessions", (IHostData data, CancellationToken ct) =>
             data.ReadAsync((tx, _) => tx.Sessions.Open(), ct)).On(ListenerRole.Admin);
 
+        // plan_steam_auth: the bans the gateway enforces, the Steam verdict rows, and the gateway's own view
+        // (Steam's state, each route's auth), for the live gates; adding and lifting go through the admin actions.
+        ops.MapGet("/bans", (IHostData data, CancellationToken ct) =>
+            data.ReadAsync((tx, _) => tx.Bans.List(), ct)).On(ListenerRole.Admin);
+
+        ops.MapPost("/bans", async (IAdminActions actions, string kind, string value, int? minutes, string? reason, CancellationToken ct) =>
+        {
+            var r = await actions.AddBan(kind, value, minutes is > 0 ? TimeSpan.FromMinutes(minutes.Value) : null, reason, ct);
+            return r.Ok ? Results.Ok(new { message = r.Message }) : Results.Conflict(new { error = r.Reason, detail = r.Message });
+        }).On(ListenerRole.Admin);
+
+        ops.MapDelete("/bans", async (IAdminActions actions, string kind, string value, CancellationToken ct) =>
+        {
+            var r = await actions.LiftBan(kind, value, ct);
+            return r.Ok ? Results.Ok(new { message = r.Message }) : Results.Conflict(new { error = r.Reason, detail = r.Message });
+        }).On(ListenerRole.Admin);
+
+        ops.MapGet("/steam-auth", (IHostData data, CancellationToken ct) => data.ReadAsync(async (tx, _) =>
+        {
+            var rows = new List<SteamAuthRecord>();
+            foreach (var s in await tx.Sessions.Open())
+                if (await tx.SteamAuth.Get(s.Id) is { } row) rows.Add(row with { TicketSha256 = row.TicketSha256[..Math.Min(12, row.TicketSha256.Length)] });
+            return rows;
+        }, ct)).On(ListenerRole.Admin);
+
+        ops.MapGet("/gateway", async (IAdminGateway gateway, CancellationToken ct) => await gateway.Snapshot(ct)).On(ListenerRole.Admin);
+
         ops.MapGet("/characters/{id}", async (IHostData data, string id, CancellationToken ct) =>
         {
             var c = await data.ReadAsync(async (tx, _) => await tx.Characters.Get(id) is { } ch

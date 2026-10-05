@@ -33,9 +33,64 @@ public class SourceConnectReaderFacts
         Span<byte> id = stackalloc byte[8];
         BinaryPrimitives.WriteUInt64LittleEndian(id, steamId);
         m.Write(id);
-        m.Write(new byte[ticketTail]);
+        m.Write(TicketTail(ticketTail));
         return m.ToArray();
     }
+
+    /// <summary>A recognisable ticket body: 1, 2, 3, …</summary>
+    static byte[] TicketTail(int n) => Enumerable.Range(1, n).Select(i => (byte)i).ToArray();
+
+    [Fact]
+    public void The_ticket_is_the_blob_after_its_steamid_prefix()
+    {
+        var p = Connect(ticketTail: 20);
+        Assert.True(SourceConnectReader.TryReadTicket(p, out var sid, out var ticket));
+        Assert.Equal(Sid, sid);
+        Assert.Equal(TicketTail(20), p[ticket]);
+        Assert.Equal(p.Length, ticket.End.Value); // the ticket runs to the end of the packet: nothing after it
+    }
+
+    [Fact]
+    public void An_unreadable_connect_has_no_ticket() =>
+        Assert.False(SourceConnectReader.TryReadTicket(Connect(ticketTail: 0), out _, out _));
+
+    /// <summary>A backend's S2C_CHALLENGE with its own identity: GS SteamID 0x1122…, secure 1, authProtocol 2.</summary>
+    static byte[] BackendChallenge()
+    {
+        var b = new SourceCodec { GameServerSteamId = 0x1122334455667788UL }.Challenge(0x7777, [0xFF, 0xFF, 0xFF, 0xFF, 0x71, 9, 9, 9, 9]);
+        b[SourceCodec.SecureOffset] = 1;
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(SourceCodec.AuthProtocolOffset), 2);
+        return b;
+    }
+
+    static (ulong Gs, byte Secure, int Auth) Fields(byte[] c) => (
+        BinaryPrimitives.ReadUInt64LittleEndian(c.AsSpan(SourceCodec.GameServerSteamIdOffset)),
+        c[SourceCodec.SecureOffset],
+        BinaryPrimitives.ReadInt32LittleEndian(c.AsSpan(SourceCodec.AuthProtocolOffset)));
+
+    [Fact]
+    public void The_rewrite_stamps_the_gateways_identity_and_insecure_and_nothing_else()
+    {
+        var before = BackendChallenge();
+        var after = new SourceCodec().RewriteChallenge(before, 0x0102030405060708UL, secure: false);
+
+        Assert.Equal((0x1122334455667788UL, (byte)1, 2), Fields(before)); // the setup took effect
+        Assert.Equal((0x0102030405060708UL, (byte)0, 2), Fields(after));
+        Assert.Equal(before.Length, after.Length);
+        var changed = Enumerable.Range(0, before.Length).Where(i => before[i] != after[i]).ToList();
+        Assert.All(changed, i => Assert.InRange(i, SourceCodec.GameServerSteamIdOffset, SourceCodec.SecureOffset));
+    }
+
+    [Fact]
+    public void The_rewrite_sets_the_auth_protocol_only_when_asked()
+    {
+        var after = new SourceCodec().RewriteChallenge(BackendChallenge(), 1, secure: false, authProtocol: SourceCodec.AuthProtocolSteam);
+        Assert.Equal(SourceCodec.AuthProtocolSteam, Fields(after).Auth);
+    }
+
+    [Fact]
+    public void Only_a_challenge_is_rewritten() =>
+        Assert.Throws<ArgumentException>(() => new SourceCodec().RewriteChallenge(Connect(), 1, false));
 
     [Fact]
     public void Reads_the_steamid_prepended_to_the_ticket()
@@ -119,6 +174,33 @@ public class SourceConnectReaderFacts
 /// <summary>The gateway's toy codec agrees with Host.FakeClient's ToyWire byte for byte.</summary>
 public class ToyCodecFacts
 {
+    [Fact]
+    public void The_toy_ticket_is_the_whole_blob_magic_and_tail_included()
+    {
+        var ticket = "TOYT"u8.ToArray().Concat(BitConverter.GetBytes(76561198000000042UL)).Concat("deny:x"u8.ToArray()).ToArray();
+        var p = new byte[11 + ticket.Length + 1];
+        BinaryPrimitives.WriteUInt32LittleEndian(p, 0xFFFFFFFF);
+        p[4] = (byte)'k';
+        BinaryPrimitives.WriteUInt16LittleEndian(p.AsSpan(9), (ushort)ticket.Length);
+        ticket.CopyTo(p, 11);
+
+        Assert.True(new ToyCodec().TryReadTicket(p, out var sid, out var range));
+        Assert.Equal(76561198000000042UL, sid);
+        Assert.Equal(ticket, p[range]);
+    }
+
+    [Fact]
+    public void The_toy_rewrite_appends_the_identity_and_the_client_still_reads_its_challenge()
+    {
+        var before = ToyWire.ChallengePacket(0x5151, 0x6262);
+        var after = new ToyCodec().RewriteChallenge(before, 0x0102030405060708UL, secure: false);
+
+        Assert.Equal(before, after[..before.Length]);
+        Assert.Equal(0x0102030405060708UL, BinaryPrimitives.ReadUInt64LittleEndian(after.AsSpan(ToyCodec.GameServerSteamIdOffset)));
+        Assert.True(ToyWire.TryReadChallenge(after, out var challenge, out var cc));
+        Assert.Equal((0x5151, 0x6262), (challenge, cc));
+    }
+
     [Fact]
     public void Reads_the_steamid_from_a_toy_connect()
     {

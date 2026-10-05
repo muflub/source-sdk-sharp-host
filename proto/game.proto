@@ -26,6 +26,8 @@ service InstanceService {
   rpc PlayerJoined(PlayerJoinedRequest) returns (PlayerJoinedResponse);
   rpc ResolvePeer(ResolvePeerRequest) returns (ResolvePeerResponse);
   rpc PlayerLeft(PlayerLeftRequest) returns (Ack);
+  // plan_steam_auth S-20, SDK 2.6.0: the fresh Steam ticket a client minted for a Reauth command.
+  rpc SubmitTicket(SubmitTicketRequest) returns (SubmitTicketResponse);
   rpc HopReady(HopReadyRequest) returns (Ack);
   rpc ExecResult(ExecResultRequest) returns (Ack);
   rpc Log(LogRequest) returns (Ack);
@@ -54,8 +56,15 @@ message ServerCommand {
     NextLevel next_level = 19;
     AnchorsChanged anchors_changed = 20;
     StoreChanged store_changed = 21;
+    Reauth reauth = 22;
   }
 }
+
+// plan_steam_auth S-11/S-20, SDK 2.6.0: the gateway restarted and lost this player's Steam session. The
+// game asks its client for a fresh auth ticket (ISteamUser::GetAuthSessionTicket, cancelling the previous
+// one) and returns it with SubmitTicket and the same nonce before the deadline; otherwise the player is
+// kicked to reconnect. gs_steamid is the game server the ticket is for.
+message Reauth { string steamid = 1; uint64 gs_steamid = 2; string nonce = 3; int64 deadline_unix_ms = 4; string peer = 5; }
 
 message Drain { string reason = 1; }
 message Kick { string steamid = 1; string reason = 2; }
@@ -110,6 +119,19 @@ message BootingRequest {
   // What the server runs: every non-framework assembly loaded in its process, and the modules
   // the game declares (SourceSharp mods). Recorded per boot (instance.modules); never judged.
   repeated LoadedModule loaded = 6;
+  // plan_steam_auth S-18, SDK 2.6.0: the mod's server-browser entry (mods.yaml's `browser` block). Fields may name
+  // world-status keys in braces ({players}, {deepest}, ...); a key the host does not publish refuses Booting.
+  Browser browser = 7;
+}
+
+message Browser {
+  string name = 1;
+  string description = 2;
+  string tags = 3;
+  string region = 4;
+  int32 max_players = 5;           // 0 = the host's capacity
+  string map = 6;                  // template
+  map<string, string> rules = 7;   // key -> template
 }
 
 message LoadedModule {
@@ -172,6 +194,16 @@ message ResolvePeerResponse {
   string client_addr = 3;
   string steamid = 4;
 }
+
+message SubmitTicketRequest {
+  string request_id = 1;
+  string peer = 2;     // the peer the engine sees for the player
+  string nonce = 3;    // the Reauth command's
+  bytes ticket = 4;    // the client's auth session ticket, as GetAuthSessionTicket wrote it
+}
+
+// outcome: Ok | Denied | AlreadyClaimed | Timeout | Unavailable | Stale (a nonce that is not the current one)
+message SubmitTicketResponse { string outcome = 1; string reason = 2; }
 
 message PlayerLeftRequest {
   string request_id = 1;

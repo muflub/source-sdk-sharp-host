@@ -38,6 +38,13 @@ service GatewayEvents {
   rpc Identify(IdentifyRequest) returns (IdentifyResponse);
   rpc PinAssigned(PlayerPin) returns (EventAck);
   rpc Stats(GatewayStats) returns (EventAck);
+  // plan_steam_auth, additive. Steam withdrew a session's auth, or a ban now covers it:
+  // the gateway has stopped its upstream; the service kicks it at its instance (S-12).
+  rpc AuthRevoked(AuthRevokedEvent) returns (EventAck);
+  // A session carried over a gateway restart needs a fresh ticket from its client (S-11, S-20).
+  rpc ReauthNeeded(ReauthNeededEvent) returns (EventAck);
+  // The gateway issued a temp ban (S-15); the service stores it so SyncTable restores it.
+  rpc TempBanned(TempBannedEvent) returns (EventAck);
 }
 
 message SessionEvent {
@@ -59,6 +66,15 @@ message IdentifyRequest {
   string session_id = 2;
   string client_addr = 3;
   string steamid = 4;
+  // plan_steam_auth, additive. Set when Steam validated the connect's ticket (S-3, S-10):
+  // the service writes them to the session's steam_auth row. Ticket bytes never leave the gateway.
+  bool steam_validated = 5;
+  string ticket_sha256 = 6;
+  string epoch = 7;
+  uint64 gs_steamid = 8;
+  // Steam answered "already claimed" for this ticket (S-11): the service readmits it once when
+  // the hash matches a valid row from an earlier epoch, and says so with `reauth`.
+  bool ticket_claimed = 9;
 }
 
 message IdentifyResponse {
@@ -67,6 +83,41 @@ message IdentifyResponse {
   string backend = 3;          // hub for a new arrival; the routed instance for a returning one
   uint64 table_version = 4;
   repeated string close_sessions = 5; // single presence: silent sessions taken over
+  // plan_steam_auth, additive: a claimed ticket was readmitted (S-11); the gateway asks for a fresh one at once.
+  bool reauth = 6;
+}
+
+message AuthRevokedEvent {
+  string request_id = 1;
+  string session_id = 2;
+  string client_addr = 3;
+  string steamid = 4;
+  string backend = 5;
+  string reason = 6;
+}
+
+message ReauthNeededEvent {
+  string request_id = 1;
+  string session_id = 2;
+  string steamid = 3;
+  uint64 gs_steamid = 4;
+  string nonce = 5;
+  string backend = 6;
+  string peer = 7;
+}
+
+// One ban (S-14). kind: "address" (IPv4 or CIDR) | "steamid". until_unix_ms 0 = permanent.
+message Ban {
+  string kind = 1;
+  string value = 2;
+  int64 until_unix_ms = 3;
+  string reason = 4;
+}
+
+message TempBannedEvent {
+  string request_id = 1;
+  Ban ban = 2;
+  int32 strikes = 3;
 }
 
 message GatewayStats {
@@ -101,6 +152,62 @@ service GatewayControl {
   // routed to a backend that is not ready hold their packets (8.1b) and replay them,
   // in arrival order, when it is marked ready.
   rpc BackendReady(BackendReadyRequest) returns (ControlAck);
+  // plan_steam_auth, additive.
+  rpc SetBans(SetBansRequest) returns (ControlAck);          // the whole list; matching live sessions are kicked
+  rpc SetOptions(SetOptionsRequest) returns (ControlAck);    // the live-tunable options (S-21)
+  rpc EndAuth(EndAuthRequest) returns (ControlAck);          // the player left for good: release the ticket now (S-13)
+  rpc Reauth(ReauthRequest) returns (ReauthResponse);        // a fresh ticket from the client (S-20)
+}
+
+message SetBansRequest {
+  uint64 version = 1;
+  repeated Ban bans = 2;
+}
+
+message StrikeRule {
+  int32 failures = 1;
+  int64 window_ms = 2;
+  int64 base_ms = 3;
+  int64 cap_ms = 4;
+  int64 repeat_window_ms = 5;
+}
+
+// The options an operator tunes live (S-21). Every field is set: the service sends the whole set.
+message LiveOptions {
+  int64 presence_timeout_ms = 1;
+  StrikeRule temp_ban_ip = 2;
+  StrikeRule temp_ban_steamid = 3;
+  int64 auth_timeout_ms = 4;
+  int64 reauth_timeout_ms = 5;
+  int32 reauth_attempts = 6;
+  string reauth_unanswered = 7; // Kick | Trust
+  int64 claimed_trust_ms = 8;
+  int64 kick_grace_ms = 9;
+  string unavailable_reason = 10;
+}
+
+message SetOptionsRequest {
+  uint64 version = 1;
+  LiveOptions options = 2;
+}
+
+message EndAuthRequest {
+  string session_id = 1;
+}
+
+message ReauthRequest {
+  string session_id = 1;
+  string nonce = 2;
+  bytes ticket = 3;
+}
+
+message ReauthResponse {
+  string outcome = 1; // Ok | Denied | AlreadyClaimed | Timeout | Unavailable | Stale
+  string reason = 2;
+  // On Ok, for the session's steam_auth row.
+  string ticket_sha256 = 3;
+  string epoch = 4;
+  uint64 gs_steamid = 5;
 }
 
 message BackendReadyRequest {
@@ -127,9 +234,12 @@ message RouteTable {
   repeated Route routes = 2;
   string default_backend = 3;
   repeated PlayerPin pins = 4;
-  repeated string banned_addresses = 5;
+  repeated string banned_addresses = 5;   // deprecated by `bans`; still read when `bans` is empty
   // Lane G, additive: backends not yet ready; sessions routed to them hold.
   repeated string unready_backends = 6;
+  // plan_steam_auth, additive: every ban (S-14) and the live options (S-21).
+  repeated Ban bans = 7;
+  LiveOptions options = 8;
 }
 
 message SetRouteRequest {
@@ -169,6 +279,9 @@ message ServerInfo {
   map<string, string> rules = 9;
   uint32 app_id = 10;
   string version = 11;
+  // plan_steam_auth S-18, additive: for the Steam game server's listing (SetGameTags, SetRegion).
+  string tags = 12;
+  string region = 13;
 }
 
 message A2sPlayer {
@@ -197,6 +310,10 @@ message SessionInfo {
   int64 bytes_in = 9;
   int64 bytes_out = 10;
   int32 held = 11;
+  // plan_steam_auth, additive: none | validating | valid | reauthing | revoked
+  string auth = 12;
+  string epoch = 13;
+  string ticket_sha256_prefix = 14;
 }
 
 message GatewaySnapshot {
@@ -205,4 +322,9 @@ message GatewaySnapshot {
   repeated PlayerPin pins = 3;
   int32 admission_queue = 4;
   ServerInfo server_info = 5;
+  // plan_steam_auth, additive: the gateway's Steam game server.
+  string steam_mode = 6;        // Off | Fake | Steamworks
+  bool steam_logged_on = 7;
+  uint64 gs_steamid = 8;
+  string steam_epoch = 9;
 }

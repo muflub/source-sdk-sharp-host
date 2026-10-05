@@ -39,6 +39,22 @@ public sealed class SourceCodec : IHandshakeCodec
         return true;
     }
 
+    public bool TryReadTicket(ReadOnlySpan<byte> p, out ulong steamId, out Range ticket) =>
+        SourceConnectReader.TryReadTicket(p, out steamId, out ticket);
+
+    /// <summary>Offsets in S2C_CHALLENGE (docs/net-protocol.md §2.2).</summary>
+    public const int AuthProtocolOffset = 17, GameServerSteamIdOffset = 23, SecureOffset = 31;
+
+    public byte[] RewriteChallenge(ReadOnlySpan<byte> p, ulong gameServerSteamId, bool secure, int? authProtocol = null)
+    {
+        if (!IsChallenge(p) || p.Length <= SecureOffset) throw new ArgumentException("not an S2C_CHALLENGE with Steam auth fields", nameof(p));
+        var b = p.ToArray();
+        if (authProtocol is { } ap) BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(AuthProtocolOffset), ap);
+        BinaryPrimitives.WriteUInt64LittleEndian(b.AsSpan(GameServerSteamIdOffset), gameServerSteamId);
+        b[SecureOffset] = secure ? (byte)1 : (byte)0;
+        return b;
+    }
+
     /// <summary>S2C_CHALLENGE, 39 bytes (docs/net-protocol.md §2.2).</summary>
     public byte[] Challenge(int challenge, ReadOnlySpan<byte> getChallenge)
     {
@@ -74,16 +90,21 @@ public sealed class SourceCodec : IHandshakeCodec
 /// protocol, auth protocol, challenge and client challenge (21 bytes), three NUL-terminated strings
 /// (name ≤ 256, password ≤ 256, product version ≤ 32), an i16 ticket length L (8 &lt; L ≤ 2048), then
 /// the ticket blob whose first 8 bytes are the SteamID64, little-endian, in the clear
-/// (docs/net-protocol.md §2.3). It reads, never rewrites.
+/// (docs/net-protocol.md §2.3). It only reads.
 /// <b>Unverified until the H0f capture.</b>
 /// </summary>
 public static class SourceConnectReader
 {
     public const int FixedPrefix = 21;
 
-    public static bool TryReadSteamId(ReadOnlySpan<byte> p, out ulong steamId)
+    public static bool TryReadSteamId(ReadOnlySpan<byte> p, out ulong steamId) => TryReadTicket(p, out steamId, out _);
+
+    /// <summary>The SteamID the ticket blob claims, and the ticket Steam validates: the blob after its 8-byte
+    /// SteamID prefix (L - 8 bytes; docs/net-protocol.md §2.3, "L counts the 8-byte prefix").</summary>
+    public static bool TryReadTicket(ReadOnlySpan<byte> p, out ulong steamId, out Range ticket)
     {
         steamId = 0;
+        ticket = default;
         if (p.Length < FixedPrefix || BinaryPrimitives.ReadUInt32LittleEndian(p) != 0xFFFFFFFF || p[4] != SourceCodec.ConnectType)
             return false;
         var at = FixedPrefix;
@@ -102,6 +123,7 @@ public static class SourceConnectReader
         // public (1) and an individual account (type 1).
         if ((id >> 56) != 1 || ((id >> 52) & 0xF) != 1) return false;
         steamId = id;
+        ticket = new Range(at + 8, at + len);
         return true;
     }
 }

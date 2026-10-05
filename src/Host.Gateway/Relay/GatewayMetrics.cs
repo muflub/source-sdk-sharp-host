@@ -22,6 +22,11 @@ public sealed class GatewayMetrics
     public Counter Closes { get; }
     public Counter A2sAnswered { get; }
     public Counter HandshakesRateLimited { get; }
+    public Counter BannedDropped { get; }
+    public Counter ConnectsRefused { get; }
+    public Counter AuthVerdicts { get; }
+    public Counter TempBans { get; }
+    public Counter Revocations { get; }
 
     public GatewayMetrics(CollectorRegistry? registry = null)
     {
@@ -40,6 +45,11 @@ public sealed class GatewayMetrics
         Closes = f.CreateCounter("gateway_session_closes_total", "Sessions closed, any reason.");
         A2sAnswered = f.CreateCounter("gateway_a2s_answered_total", "Server queries answered by the gateway.");
         HandshakesRateLimited = f.CreateCounter("gateway_handshakes_rate_limited_total", "Handshake packets dropped by the per-IP rate.");
+        BannedDropped = f.CreateCounter("gateway_banned_dropped_total", "Datagrams dropped from banned addresses (plan_steam_auth S-14).");
+        ConnectsRefused = f.CreateCounter("gateway_connects_refused_total", "Connects answered with a reject, by reason.", "reason");
+        AuthVerdicts = f.CreateCounter("gateway_steam_verdicts_total", "Steam auth verdicts, by outcome.", "outcome");
+        TempBans = f.CreateCounter("gateway_temp_bans_total", "Temp bans issued (S-15), by kind.", "kind");
+        Revocations = f.CreateCounter("gateway_auth_revocations_total", "Validated sessions withdrawn (S-12).");
     }
 
     /// <summary>The exposition text, for facts.</summary>

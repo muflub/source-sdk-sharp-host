@@ -44,12 +44,67 @@ public class ManagedOnlyFacts
                 scanned++;
                 // This file names the forbidden constructs as test inputs; the rule's own source names them in its pattern.
                 if (f.EndsWith("ManagedOnlyFacts.cs") || f.EndsWith("ManagedOnlyRule.cs")) continue;
-                found.AddRange(ManagedOnlyRule.Violations(File.ReadAllText(f)).Select(v => $"{Path.GetRelativePath(RepoFiles.Root, f)}: {v}"));
+                found.AddRange(ManagedOnlyRule.Violations(File.ReadAllText(f), ManagedOnlyRule.UnsafeAllowed.Contains(p)).Select(v => $"{Path.GetRelativePath(RepoFiles.Root, f)}: {v}"));
             }
         }
         Assert.True(scanned > projects.Count, "the scan read no source files");
         Assert.Empty(found);
     }
+
+    [Fact]
+    public void The_unsafe_exemption_is_exactly_the_steam_binding() =>
+        Assert.Equal(["Host.Steam"], ManagedOnlyRule.UnsafeAllowed.Order());
+
+    [Fact]
+    public void An_exempt_project_may_allow_unsafe_blocks_and_nothing_else()
+    {
+        const string csproj = "<PropertyGroup><AllowUnsafeBlocks>true</AllowUnsafeBlocks></PropertyGroup>";
+        Assert.NotEmpty(ManagedOnlyRule.Violations(csproj));                       // refused without the exemption
+        Assert.Empty(ManagedOnlyRule.Violations(csproj, allowUnsafeBlocks: true)); // accepted with it
+        Assert.NotEmpty(ManagedOnlyRule.Violations("class A { [DllImport(\"x\")] static extern int F(); }", allowUnsafeBlocks: true));
+    }
+
+    [Fact]
+    public void Every_unsafe_exemption_is_in_use()
+    {
+        // A stale exemption would let a later project slip through under an old name.
+        foreach (var p in ManagedOnlyRule.UnsafeAllowed)
+        {
+            var csproj = File.ReadAllText(RepoFiles.Path_("src", p, p + ".csproj"));
+            Assert.Contains("AllowUnsafeBlocks", ManagedOnlyRule.Violations(csproj));
+        }
+    }
+
+    /// <summary>Every project <paramref name="project"/> reaches through ProjectReference, transitively.</summary>
+    static HashSet<string> ProjectClosure(string project)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var todo = new Stack<string>([project]);
+        while (todo.TryPop(out var p))
+        {
+            var csproj = File.ReadAllText(RepoFiles.Path_("src", p, p + ".csproj"));
+            foreach (var r in ManagedOnlyRule.ReferencesOf(csproj).Where(r => RepoFiles.Projects().Contains(r)))
+                if (seen.Add(r)) todo.Push(r);
+        }
+        return seen;
+    }
+
+    [Fact]
+    public void Project_closure_follows_references_transitively()
+    {
+        // The walker must see past the first hop, or the refusal below proves nothing.
+        // Host.Admin reaches Host.Contracts only through another project.
+        Assert.Contains("Host.Contracts", ProjectClosure("Host.Admin"));
+        Assert.DoesNotContain("Host.Contracts", ManagedOnlyRule.ReferencesOf(File.ReadAllText(RepoFiles.Path_("src", "Host.Admin", "Host.Admin.csproj"))));
+    }
+
+    [Theory]
+    [InlineData("Host.Sdk")]
+    [InlineData("Host.Contracts")]
+    [InlineData("Host.Launcher")]
+    [InlineData("Host.FakeGame")]
+    public void Nothing_that_ships_into_a_game_pod_reaches_the_steam_binding(string project) =>
+        Assert.DoesNotContain("Host.Steam", ProjectClosure(project));
 
     [Theory]
     [InlineData("Host.Contracts", new string[0])]

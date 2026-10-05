@@ -236,8 +236,23 @@ public class SessionFacts
         await h.Instance("hub-1", InstanceKind.Hub);
         var sdk = h.Sdk("hub-1");
         var r = await sdk.Pumped(sdk.Session.PlayerJoined("127.0.4.2:27005", "76561198000000001"));
-        Assert.Equal(new PlayerJoin(true, "", "sess-76561198000000001", "203.0.113.7:27005"), r.Value);
+        Assert.Equal(new PlayerJoin(true, "", "sess-76561198000000001", "203.0.113.7:27005") { SteamId = "76561198000000001" }, r.Value);
         Assert.Equal([("127.0.4.2:27005", "76561198000000001")], h.Sessions.Joined);
+    }
+
+    [Fact]
+    public async Task PlayerJoined_uses_the_steamid_the_host_knows_for_the_peer_not_the_engines()
+    {
+        // plan_steam_auth S-7: under sv_lan 1 the engine reports no real SteamID; the gateway validated one.
+        await using var h = await SdkHarness.Start();
+        await h.Instance("hub-1", InstanceKind.Hub);
+        h.Sessions.Known["127.1.0.9:29005"] = new P.ResolvePeerResponse { Found = true, SessionId = "s9", ClientAddr = "203.0.113.9:27005", Steamid = "76561198000000009" };
+        var sdk = h.Sdk("hub-1");
+
+        var r = await sdk.Pumped(sdk.Session.PlayerJoined("127.1.0.9:29005", "STEAM_ID_LAN"));
+
+        Assert.Equal("76561198000000009", r.Value.SteamId);
+        Assert.Equal([("127.1.0.9:29005", "76561198000000009")], h.Sessions.Joined);
     }
 
     [Fact]

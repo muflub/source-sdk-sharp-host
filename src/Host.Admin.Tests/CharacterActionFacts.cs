@@ -49,6 +49,35 @@ public sealed class CharacterActionFacts : WorldFacts
     }
 
     [Fact]
+    public async Task Ban_writes_the_bans_table_and_tells_the_gateway()
+    {
+        await W.Character();
+        await A.BanAccount(AdminWorld.Steam, "cheating");
+        var ban = Assert.Single(await W.D.Read(tx => tx.Bans.List()));
+        Assert.Equal(("steamid", AdminWorld.Steam, "admin", "cheating", (DateTimeOffset?)null), (ban.Kind, ban.Value, ban.Source, ban.Reason, ban.Until));
+        Assert.Equal(["push-bans"], W.Gateway.Calls);
+    }
+
+    [Fact]
+    public async Task Unban_removes_the_ban_and_tells_the_gateway()
+    {
+        await W.Character();
+        await A.BanAccount(AdminWorld.Steam, "cheating");
+        await A.UnbanAccount(AdminWorld.Steam);
+        Assert.Empty(await W.D.Read(tx => tx.Bans.List()));
+        Assert.Equal(["push-bans", "push-bans"], W.Gateway.Calls);
+    }
+
+    [Fact]
+    public async Task A_refused_ban_neither_writes_nor_pushes()
+    {
+        var r = await A.BanAccount("76561198099999999", "no such account");
+        Assert.False(r.Ok);
+        Assert.Empty(await W.D.Read(tx => tx.Bans.List()));
+        Assert.Empty(W.Gateway.Calls);
+    }
+
+    [Fact]
     public async Task Delete_account_marks_every_character_deleted()
     {
         var a = await W.Character("Ann");

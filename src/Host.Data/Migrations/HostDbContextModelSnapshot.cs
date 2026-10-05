@@ -160,6 +160,41 @@ namespace SourceSharp.Host.Data.Migrations
                     b.ToTable("australium_ledger", (string)null);
                 });
 
+            modelBuilder.Entity("SourceSharp.Host.Data.BanRow", b =>
+                {
+                    b.Property<string>("Kind")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Value")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("value");
+
+                    b.Property<long>("Created")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source");
+
+                    b.Property<long?>("Until")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("until");
+
+                    b.HasKey("Kind", "Value");
+
+                    b.HasIndex("Until");
+
+                    b.ToTable("bans", (string)null);
+                });
+
             modelBuilder.Entity("SourceSharp.Host.Data.CharacterRow", b =>
                 {
                     b.Property<string>("Id")
@@ -1071,6 +1106,47 @@ namespace SourceSharp.Host.Data.Migrations
                     b.HasKey("Key");
 
                     b.ToTable("settings", (string)null);
+                });
+
+            modelBuilder.Entity("SourceSharp.Host.Data.SteamAuthRow", b =>
+                {
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("Epoch")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("epoch");
+
+                    b.Property<long>("GsSteamId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("gs_steam_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<string>("SteamId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("steam_id");
+
+                    b.Property<string>("TicketSha256")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ticket_sha256");
+
+                    b.Property<long>("ValidatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("validated_at");
+
+                    b.HasKey("SessionId");
+
+                    b.HasIndex("SteamId");
+
+                    b.ToTable("steam_auth", (string)null);
                 });
 
             modelBuilder.Entity("SourceSharp.Host.Data.TradeRow", b =>

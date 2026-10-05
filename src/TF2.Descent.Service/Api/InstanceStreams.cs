@@ -80,6 +80,10 @@ public sealed class InstanceStreams : IInstanceCommands
         InstanceCommand.LeaseRevoked r => new P.ServerCommand { LeaseRevoked = new P.LeaseRevoked { CharacterId = r.CharacterId, Reason = r.Reason } },
         InstanceCommand.AnchorsChanged a => new P.ServerCommand { AnchorsChanged = new P.AnchorsChanged { PartyId = a.PartyId } },
         InstanceCommand.StoreChanged s => new P.ServerCommand { StoreChanged = new P.StoreChanged { Scope = (P.StoreScope)(int)s.Scope, Owner = s.Owner, Key = s.Key } },
+        InstanceCommand.Reauth r => new P.ServerCommand { Reauth = new P.Reauth
+        {
+            Steamid = r.SteamId, GsSteamid = r.GsSteamId, Nonce = r.Nonce, DeadlineUnixMs = r.Deadline.ToUnixTimeMilliseconds(), Peer = r.Peer,
+        } },
         _ => throw new ArgumentOutOfRangeException(nameof(command), command.GetType().Name),
     };
 }

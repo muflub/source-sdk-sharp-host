@@ -431,6 +431,43 @@ address is 127.0.0.1 — a local test like this one — hits the branch; a playe
 LoadBalancer never does. Note that a 127.0.0.1 client is also treated as local for the password check, which only a
 local tester can be.
 
+## 13. Steam auth at the gateway (plan_steam_auth)
+
+The Steam game server lives in the gateway; the engine runs with `sv_lan 1` and no Steam of its own
+(D-H11's Interpose stays, with the engine shown a per-player synthetic loopback address instead of the
+real one: `Relay.InterposeAddresses = Synthetic`). What the gateway does on the wire:
+
+| step | what | where | Capture |
+|---|---|---|---|
+| `C2S_CONNECT` held | read the ticket blob at `T` (§2.3): SteamID64 = first 8 bytes, the ticket Steam validates = the remaining `L - 8` bytes; the connect is held, its resends dropped, until `ValidateAuthTicketResponse` OK (S-3) | `SourceConnectReader.TryReadTicket` | pending (S0c, client) |
+| backend `S2C_CHALLENGE` rewritten | GS SteamID (offset 23, u64) := the gateway's game server; secure (offset 31) := 0 (a SourceSharp client is `-insecure` and refuses a secure server); `authProtocol` (offset 17) left alone: the Steam-less engine already sends 3 (S-4, ruled 2026-10-04) | `SourceCodec.RewriteChallenge` | engine side measured (S0a, below); client side pending (S0c) |
+| refusals | `S2C_CONNREJECT` with the reason: banned; already connected; Steam unavailable (configured text); Steam auth failed/timed out; please reconnect (a claimed ticket) | `GatewayRelay.Admission` | pending |
+| Steam's own UDP | the library runs with `SharedQueryPort` and opens no UDP socket: connectionless datagrams that are not the handshake (and not A2S unless `Steam.A2s = Library`) are handed to `HandleIncomingPacket`; its outgoing packets leave the public socket (S-19) | `GatewayRelay.ToSteam` | measured, see below |
+
+Measured 2026-10-04 (S0a, S0b), image `sourcesharp-engine:sa-ef86769` (rootless podman), the sharp repo's test
+mod on `dm_lockdown` with `-insecure +sv_lan 1`, Interpose with synthetic addresses, the real §2 bytes sent from
+127.1.0.9 inside the container's network namespace (scratch `probe.py`):
+
+| arm | `S2C_CHALLENGE` | connect with a SteamID-prefixed junk ticket |
+|---|---|---|
+| network (podman slirp) | 39 B, magic `0x5A4F4933`, `authProtocol` 3, key length 0, **GS SteamID 90294097183461395**, secure 0 | `S2C_CONNECTION` (20 B) |
+| `--network none` (a pod's NetworkPolicy) | the same, but **GS SteamID 1** | `S2C_CONNECTION` |
+| `--network none`, no `steamclient.so` | the same as above (GS SteamID 1) | `S2C_CONNECTION` |
+
+So the engine under `sv_lan 1` validates no ticket and still logs on to Steam anonymously when it can reach
+it; in a pod it cannot, and every client would see GS SteamID 1 and mint its ticket for that. The gateway's
+rewrite of the GS SteamID is therefore required, not cosmetic, and `authProtocol` needs no rewrite. The
+engine runs without `steamclient.so`; the engine image keeps it for `Instances.SteamOff = false` (the
+engine's own Steam). Still open: the SteamID the engine and the game DLL report for a connected client
+(the engine's console did not log it to stdout; the real-client run will).
+
+Measured 2026-10-04, image `sourcesharp-gateway:sa-06b11a7` (rootless podman): anonymous logon
+succeeds (`Steam game server logged on as 90294096598126611`); `steamclient.so` is loaded from
+`~/.steam/sdk64` after the library's local miss; the only UDP socket in the container is the gateway's
+public one, and the library's only listener is TCP on `127.0.0.1:<random>`; an anonymous logon gets a new
+GS SteamID each time (`…126611`, then `…476819` on the next start), which is why a gateway restart
+re-auths players in game (S-11) rather than replaying tickets ("already claimed").
+
 ## Open questions the captures must settle
 
 1. Does the 2013 client send a second `C2S_CONNECT` on a second `S2C_CHALLENGE`?
@@ -447,3 +484,7 @@ local tester can be.
 12. Does `srcds_linux64` answer the sidecar's 127.1.x.y peers from 127.0.0.1:27015 (the source the sidecar accepts), with the engine bound to 0.0.0.0?
 13. Added RTT and jitter of the gateway → sidecar gRPC hop, and its behaviour under packet loss (head-of-line blocking across sessions on one connection). (H0b)
 14. ~~Interpose mode against the real engine~~ — settled on this box (§12.1): relayed datagrams are read with the real address and the replies reach the stream once sends to 127.0.0.1 use the socket. Still open: a non-loopback client (the LoadBalancer path) and Steam auth with `sv_lan 0` (H0c).
+15. (plan_steam_auth S0a) The 2013 engine under `sv_lan 1`: ~~its `S2C_CHALLENGE` and whether it accepts a ticketed connect~~ (measured, §13); still open: the SteamID `status` and the game DLL report for a client, and the effective `rate` caps.
+16. (S0c, client) With the backend's challenge rewritten to the gateway's GS SteamID: does the client send the same ticket on the next connect and on a hop?
+17. (S0e, client) After a disconnect, a reject or a kick: new ticket bytes, or the cached ones?
+18. (S0h, client) Is an anonymous gateway listed in the Steam browser with the rendered entry, and must the library answer A2S itself?

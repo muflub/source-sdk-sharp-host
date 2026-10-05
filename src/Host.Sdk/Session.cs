@@ -31,6 +31,8 @@ public interface IHostSession
     /// files. Refused with <see cref="HostError.SdkVersion"/> / <see cref="HostError.ContractVersion"/> by a host that cannot speak to us.
     /// </summary>
     Task<HostResult<BootInfo>> Booting(string map, string? modImageDigest = null);
+    /// <summary>SDK 2.6.0: the mod's server-browser entry, sent with the next Booting (set it before).</summary>
+    BrowserBlock? Browser { get; set; }
     /// <summary>The port the socket reports; the answer is the port the pod was given (<see cref="HostError.PortMismatch"/> if they differ).</summary>
     Task<HostResult<int>> MapReady(int port, string map);
     /// <summary>D-H16: the teleporters on this level copy, as the last MapReady answered (set in Pump): rebuild each entrance.</summary>
@@ -227,6 +229,8 @@ internal sealed class HostSession : IHostSession
 
     // ------------------------------------------------------------------ unary
 
+    public BrowserBlock? Browser { get; set; }
+
     public Task<HostResult<BootInfo>> Booting(string map, string? modImageDigest = null) => _core.Background(async () =>
     {
         // D-H13 same-process hop: the game is booting the target's map, so become the target
@@ -244,6 +248,11 @@ internal sealed class HostSession : IHostSession
         {
             RequestId = Rpc.NewRequestId(), SdkVersion = HostSdk.Version, Module = prepared.announce, Map = map, ModImageDigest = modImageDigest ?? "",
         };
+        if (Browser is { } b)
+        {
+            request.Browser = new P.Browser { Name = b.Name, Description = b.Description, Tags = b.Tags, Region = b.Region, MaxPlayers = b.MaxPlayers, Map = b.Map };
+            foreach (var (k, v) in b.Rules ?? new Dictionary<string, string>()) request.Browser.Rules[k] = v;
+        }
         request.Loaded.AddRange(LoadedModules.Collect(_core.Options.DeclaredModules)
             .Select(m => new P.LoadedModule { Name = m.Name, Version = m.Version, Kind = m.Kind }));
         var r = await _core.Rpc.Call((m, d, ct) => _core.Instance.BootingAsync(request, m, d, ct)).ConfigureAwait(false);
@@ -308,13 +317,21 @@ internal sealed class HostSession : IHostSession
     IReadOnlyList<HostAnchor>? _pendingAnchors;
     public IReadOnlyList<HostAnchor> LevelAnchors { get; private set; } = [];
 
+    /// <summary>
+    /// SDK 2.6.0 (plan_steam_auth S-7): the SteamID that counts is the one the host knows for the peer (the gateway
+    /// validated it with Steam), asked of IPeers first; <paramref name="steamId"/>, what the engine reports, is used
+    /// only when nobody knows the peer (local mode, no gateway). The answer's <see cref="PlayerJoin.SteamId"/> says
+    /// which one was used.
+    /// </summary>
     public Task<HostResult<PlayerJoin>> PlayerJoined(string peer, string steamId) => _core.Background(async () =>
     {
-        var request = new P.PlayerJoinedRequest { RequestId = Rpc.NewRequestId(), Peer = peer, Steamid = steamId };
+        var known = await _core.Peers.Resolve(peer).ConfigureAwait(false);
+        var who = known is { Ok: true, Value.SteamId.Length: > 0 } ? known.Value.SteamId : steamId;
+        var request = new P.PlayerJoinedRequest { RequestId = Rpc.NewRequestId(), Peer = peer, Steamid = who };
         var r = await _core.Rpc.Call((m, d, ct) => _core.Instance.PlayerJoinedAsync(request, m, d, ct)).ConfigureAwait(false);
         if (r.Ok && r.Value.Allowed && r.Value.ClientAddr.Length > 0)
-            _core.PeerCache[peer] = new PeerIdentity(peer, r.Value.ClientAddr, r.Value.SessionId, steamId, PeerSource.Service);
-        return r.Map(v => new PlayerJoin(v.Allowed, v.Reason, v.SessionId, v.ClientAddr));
+            _core.PeerCache[peer] = new PeerIdentity(peer, r.Value.ClientAddr, r.Value.SessionId, who, PeerSource.Service);
+        return r.Map(v => new PlayerJoin(v.Allowed, v.Reason, v.SessionId, v.ClientAddr) { SteamId = who });
     });
 
     public Task<HostResult> PlayerLeft(string steamId, string peer) => _core.Background(async () =>

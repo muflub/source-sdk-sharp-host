@@ -14,12 +14,18 @@ MOD=${SOURCESHARP_MOD:-tf2_descent}
 # The writer emits only plain scalars, in this shape:
 #   fd_limit: <int>   restart_exit_code: <int>   args: [] | args: then "  - <arg>" lines
 #   env: {} | env: then "  KEY: <value>" lines
+#   browser: {} | browser: then indented lines (the game's server-browser entry; skipped here)
 # restart_exit_code is source#'s own (local restarts); pods are restartPolicy Never.
 SETTINGS="$GAME/mods/$MOD/mod.dedicated.yaml"
 if [ -f "$SETTINGS" ]; then
   pod_args=$#
   section=
   while IFS= read -r line || [ -n "$line" ]; do
+    # browser: (plan_steam_auth S-18) is the game's server-browser entry, read by the game from mods.yaml,
+    # never by this script: everything indented under it is skipped until the next top-level key.
+    if [ "$section" = browser ]; then
+      case "$line" in ' '*) continue ;; esac
+    fi
     case "$line" in
       ''|'#'*) continue ;;
       '  - '*)
@@ -40,6 +46,8 @@ if [ -f "$SETTINGS" ]; then
       'args:') section=args ;;
       'env: {}') section= ;;
       'env:') section=env ;;
+      'browser: {}') section= ;;
+      'browser:') section=browser ;;
       *) echo "entrypoint: $SETTINGS: unexpected line '$line' (is the mod image's source# newer than this entrypoint?)" >&2; exit 65 ;;
     esac
   done < "$SETTINGS"

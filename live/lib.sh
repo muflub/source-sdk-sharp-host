@@ -42,8 +42,20 @@ stop_admin() {
   PF_PID=""
 }
 
+# Background processes a gate started (by PID, args checked): stopped on any exit, so a failed gate leaves no
+# client playing into the next run.
+GATE_PIDS=()
+stop_gate_pids() {
+  local p
+  for p in "${GATE_PIDS[@]}"; do
+    ps -o args= -p "$p" 2>/dev/null | grep -q 'LiveDriver' && kill "$p" 2>/dev/null
+  done
+  GATE_PIDS=()
+}
+
 finish() {
   local rc=$?
+  stop_gate_pids
   stop_admin
   [ "$FAILS" -gt 0 ] && rc=1
   log "gate=$GATE tier=$TIER tip=$TIP rc=$rc fails=$FAILS log=$LOG"

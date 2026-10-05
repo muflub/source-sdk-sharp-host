@@ -54,6 +54,8 @@ public static class ServiceComposition
         services.AddSingleton<Gateway.GatewayState>();
         services.AddSingleton<Gateway.IGatewayControl>(sp => ActivatorUtilities.CreateInstance<Gateway.GatewayControlClient>(sp));
         services.AddSingleton<Gateway.GatewayRegistry>();
+        services.AddSingleton<Gateway.BrowserPublisher>();
+        services.AddHostedService(sp => sp.GetRequiredService<Gateway.BrowserPublisher>());
         services.AddSingleton<IPlayerSessions>(sp => sp.GetRequiredService<Gateway.GatewayRegistry>());
         services.AddSingleton<IInstanceRouting>(sp => sp.GetRequiredService<Gateway.GatewayRegistry>());
         services.AddSingleton<Travel.TravelCoordinator>(sp =>
