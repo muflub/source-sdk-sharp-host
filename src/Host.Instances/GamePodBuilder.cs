@@ -100,7 +100,7 @@ public static class GamePodBuilder
                 new EnvVar("RELAY_InterposeAddresses", o.SteamOff ? "Synthetic" : "Real"),
                 .. o.ExtraEnv.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => new EnvVar(kv.Key, kv.Value)),
                 new EnvVar("TMPDIR", "/tmp/game"),
-                new EnvVar("SOURCESHARP_DEVAPI_DIR", "/tmp/devapi"),
+                new EnvVar("DEBUG_API_DIR", "/tmp/debug-api"),
             ],
             // D-H10/D-H11: the launcher's relay (h2c) and health are the only ports; the
             // engine's UDP 27015 never leaves the pod, the relay reaches it on loopback.

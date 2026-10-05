@@ -54,7 +54,7 @@ public sealed class EntrypointFacts : IDisposable
         psi.Environment["GAME_DIR"] = Path.Combine(_dir, "game");
         psi.Environment["ENGINE_DIR"] = Path.Combine(_dir, "engine");
         psi.Environment["TMPDIR"] = Path.Combine(_dir, "tmp");
-        psi.Environment["SOURCESHARP_DEVAPI_DIR"] = Path.Combine(_dir, "devapi");
+        psi.Environment["DEBUG_API_DIR"] = Path.Combine(_dir, "debug-api");
         psi.Environment["ENTRYPOINT_LAUNCHER"] = Path.Combine(_dir, "launcher");
         psi.Environment["SOURCESHARP_MOD"] = "tf2_descent";
         psi.Environment.Remove("SOURCESHARP_EXAMPLE");

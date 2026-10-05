@@ -62,12 +62,12 @@ fi
 # The dynamic loader reads LD_LIBRARY_PATH once, at exec: it must be set here, before the launcher
 # starts, for the engine's own dlopen calls to find bin/linux64 and the mod's libraries.
 export LD_LIBRARY_PATH="$ENGINE/bin/linux64:$ENGINE/bin:$GAME/bin/linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export TMPDIR=${TMPDIR:-/tmp/game} SOURCESHARP_DEVAPI_DIR=${SOURCESHARP_DEVAPI_DIR:-/tmp/devapi}
+export TMPDIR=${TMPDIR:-/tmp/game} DEBUG_API_DIR=${DEBUG_API_DIR:-/tmp/debug-api}
 export LAUNCHER_EngineDir=${LAUNCHER_EngineDir:-$ENGINE}
 # What source# tells SourceSharp's Bootstrap (src/launcher): which mod, and where mods.yaml is.
 # Without it Bootstrap looks two levels above bin/managed, i.e. inside the mod folder (H0a).
 export SOURCESHARP_MOD=${SOURCESHARP_MOD:-$MOD} SOURCESHARP_MODS_YAML=${SOURCESHARP_MODS_YAML:-$GAME/mods.yaml}
-mkdir -p "$TMPDIR" "$SOURCESHARP_DEVAPI_DIR"
+mkdir -p "$TMPDIR" "$DEBUG_API_DIR"
 cd "$ENGINE"
 # ENTRYPOINT_LAUNCHER: a fact replaces the launcher to see what it would be given.
 exec "${ENTRYPOINT_LAUNCHER:-/opt/sourcesharp/launcher}" "$@"

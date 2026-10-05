@@ -151,7 +151,7 @@ make pack                          Host.Sdk + Host.Contracts as NuGet packages i
   compared with what the socket reports, because an engine that silently binds
   a higher port has cost a lane a day before.
 - Concurrent local game processes (the `LocalProcessInstanceHost` dev path)
-  each need their own `TMPDIR`, `SOURCESHARP_DEVAPI_DIR` and `-port`. With
+  each need their own `TMPDIR`, `DEBUG_API_DIR` and `-port`. With
   several up, Steam auth tickets fail and the client never joins: assert the
   join before trusting any client reading.
 - `kubectl delete pod` in a gate is the crash stimulus; the assertion is the

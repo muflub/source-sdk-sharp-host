@@ -110,7 +110,7 @@ public class PodSpecFacts
         var args = Game(Pod(InstanceKind.Level)).Args;
         string[] expected =
         [
-            "-nohltv", "+tv_enable", "0", "-devapi", "-devapisocket", "-condebug", "-nomessagebox", "-nocrashdialog", "-assertlog",
+            "-nohltv", "+tv_enable", "0", "-debugapi", "-debugapisocket", "-condebug", "-nomessagebox", "-nocrashdialog", "-assertlog",
             "+sv_lan", "1", // plan_steam_auth S-6: Steam off (SteamOffArgs)
             "-game", "/game/mods/tf2_descent", "-console", "-port", "27015", "-ip", "0.0.0.0",
             "+maxplayers", "4", "+map", "tf2_descent-7-abc123",
@@ -153,7 +153,7 @@ public class PodSpecFacts
         Assert.Equal("01J9ZABCDEFGHJKMNPQRSTVWXY", Env(g, "SOURCESHARP_HOST_INSTANCE_ID"));
         Assert.Equal("127.0.0.1:5011", Env(g, "SOURCESHARP_HOST_SIDECAR_INFO"));
         Assert.Equal("/tmp/game", Env(g, "TMPDIR"));
-        Assert.Equal("/tmp/devapi", Env(g, "SOURCESHARP_DEVAPI_DIR"));
+        Assert.Equal("/tmp/debug-api", Env(g, "DEBUG_API_DIR"));
     }
 
     [Fact]

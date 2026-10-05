@@ -125,7 +125,7 @@ public sealed class InstanceOptions
     public ImageRef ModImage { get; set; } = new();
     /// <summary>The dedicated-server flag set (§7.1), owned here so the sharp repo can change it without a release.</summary>
     public List<string> Args { get; set; } =
-        ["-nohltv", "+tv_enable", "0", "-devapi", "-devapisocket", "-condebug", "-nomessagebox", "-nocrashdialog", "-assertlog"];
+        ["-nohltv", "+tv_enable", "0", "-debugapi", "-debugapisocket", "-condebug", "-nomessagebox", "-nocrashdialog", "-assertlog"];
     /// <summary>
     /// plan_steam_auth S-6: the engine runs without Steam. The gateway validated every player, the launcher shows
     /// the engine a per-player loopback address (RELAY_InterposeAddresses = Synthetic), and these arguments go
