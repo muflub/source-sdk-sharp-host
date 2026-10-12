@@ -24,7 +24,7 @@ MOD_NAME      ?= tf2_descent
 # The 64-bit libraries anonymous 244310 lacks (plan D-H11): a directory whose bin/linux64/ holds them.
 # Default: the local Steam install of app 243750. Production: a licensed source (docs/ops.md).
 ENGINE_FILES  ?= $(HOME)/.steam/steam/steamapps/common/Source SDK Base 2013 Multiplayer
-STEAMWORKS_SDK ?= $(HOME)/Downloads/sdk
+STEAMWORKS_SDK ?= $(CURDIR)/deploy/steamworks
 
 TEST_ENV      := MSBUILDDISABLENODEREUSE=1
 SLN           := Host.slnx
@@ -104,7 +104,8 @@ image-service image-fake: image-%:
 	$(IMAGE_TOOL) push --tls-verify=false $(REGISTRY)/$(IMAGE_NAME):$(TAG)
 
 # The gateway carries the Steam game server (plan_steam_auth S-1): STEAMWORKS_SDK is the Steamworks SDK's
-# root (its redistributable_bin/linux64/libsteam_api.so goes in the image). Never committed here.
+# root (its redistributable_bin/linux64/libsteam_api.so goes in the image); by default the redistributables
+# checked in under deploy/steamworks (deploy/steamworks/README.md).
 image-gateway:
 	@root=$$(sed -n 's#.*<MapToolsRoot>\(.*\)</MapToolsRoot>.*#\1#p' roots.props); \
 	[ -f "$(STEAMWORKS_SDK)/redistributable_bin/linux64/libsteam_api.so" ] || { echo "STEAMWORKS_SDK=$(STEAMWORKS_SDK) has no redistributable_bin/linux64/libsteam_api.so (the Steamworks SDK root; docs/ops.md)"; exit 1; }; \

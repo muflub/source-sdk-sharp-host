@@ -77,8 +77,9 @@ install); a launcher alone does not close the gap, and a 32-bit engine cannot lo
   `sv_lan 1` and cannot reach the internet (NetworkPolicy). The gateway validates every client's ticket
   before forwarding its connect, enforces every ban, and keeps one connection per SteamID.
 - **Building the gateway image** needs the Steamworks SDK (its `redistributable_bin/linux64/libsteam_api.so`):
-  `make image-gateway STEAMWORKS_SDK=<sdk root>` (default `~/Downloads/sdk`). The SDK is a build context
-  only; it is never committed. `steamclient.so` comes from steamcmd at build time.
+  `make image-gateway`. The SDK's redistributables for linux64, osx and win64 are checked in under
+  `deploy/steamworks` (SDK 165, hashes in its README) and are the default build context;
+  `STEAMWORKS_SDK=<sdk root>` uses another SDK. `steamclient.so` comes from steamcmd at build time.
 - **Logon.** Anonymous by default (`Steam.AppId` 243750). An anonymous gateway gets a new GS SteamID on
   every start: harmless (players re-auth in game) but its browser identity changes. A GSLT, when one
   exists, goes in the Secret `tf2-descent-steam` (key `login-token`); the gateway reads it if present.

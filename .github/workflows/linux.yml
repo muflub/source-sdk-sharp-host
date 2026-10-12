@@ -161,7 +161,9 @@ jobs:
         with:
           context: host
           file: host/deploy/Dockerfile.${{ matrix.image }}
-          build-contexts: maptools=maptools
+          build-contexts: |
+            maptools=maptools
+            steamworks=host/deploy/steamworks
           build-args: BUILD_VERSION=${{ steps.version.outputs.build }}
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}

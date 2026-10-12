@@ -4,7 +4,8 @@
 #     --build-context steamworks=$(STEAMWORKS_SDK) .
 # (make image-gateway). No game files, no ssmap executable: the map tools are an assembly.
 # The Steam game server runs in the gateway (plan_steam_auth S-1): libsteam_api.so comes from the
-# Steamworks SDK's redistributable (a build context, never committed) and steamclient.so from steamcmd.
+# Steamworks SDK's redistributable (the build context deploy/steamworks, checked in) and steamclient.so
+# from steamcmd.
 
 # 1. steamclient.so, which the game-server API loads from ~/.steam/sdk64. Anonymous steamcmd updates
 #    itself on first run and then ships linux64/steamclient.so; the run is retried as the engine's is.
