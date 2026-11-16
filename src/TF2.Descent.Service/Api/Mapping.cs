@@ -13,6 +13,7 @@ public static class Mapping
         Instance = new P.Blob { Data = ByteString.CopyFrom(i.Instance), SchemaVersion = (uint)i.SchemaVersion },
         OwnerKind = (P.OwnerKind)(int)i.OwnerKind, OwnerId = i.OwnerId, Slot = i.Slot, Version = i.Version,
         ForCharacter = i.ForCharacter ?? "", InstanceId = i.InstanceId ?? "", Tier = i.Tier,
+        Container = (P.ItemContainer)(int)i.Container, State = (P.ItemState)(int)i.State,
     };
 
     public static P.ItemsResponse ToProto(this IEnumerable<ItemRecord> items)

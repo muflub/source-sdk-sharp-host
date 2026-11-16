@@ -326,6 +326,13 @@ service ItemService {
   rpc RecordDeath(RecordDeathRequest) returns (ItemsResponse);
   rpc LootCorpse(LootCorpseRequest) returns (ItemsResponse);
   rpc ListWorldItems(ListWorldItemsRequest) returns (ItemsResponse);
+  // SDK 2.7 (plan_sdk_2_7 §2): batched wear, in place.
+  rpc Wear(WearRequest) returns (ItemsResponse);
+  // SDK 2.7: uses up count of a carried item; the item comes back as it is after (Item.state CONSUMED when gone).
+  rpc Consume(ConsumeRequest) returns (Item);
+  // SDK 2.7: a world container opened by one character; the host replays the rules' roll from the
+  // instance seed and mints it to this floor for the opener. Once per (instance, container, character).
+  rpc OpenContainer(OpenContainerRequest) returns (ItemsResponse);
 }
 
 message TierCount {
@@ -383,6 +390,41 @@ message ItemActionRequest {
   bytes lease_token = 3;
   string item_id = 4;
   string vendor = 5;           // Buy / Sell / BuyBack
+  RepairKind repair_kind = 6;  // Repair only (SDK 2.7); unset = TOWN, the 2.6 behavior
+  string kit_id = 7;           // Repair, FIELD only: the kit, consumed with the repair
+}
+
+// TOWN: the town's repairer, hub only, costs Australium. FIELD: with a kit, anywhere.
+enum RepairKind {
+  REPAIR_KIND_TOWN = 0;
+  REPAIR_KIND_FIELD = 1;
+}
+
+message WearEntry {
+  string item_id = 1;
+  int32 amount = 2;
+}
+
+message OpenContainerRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  uint32 container_seq = 4;  // the container's number on this level, as the game numbers them
+}
+
+message ConsumeRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string item_id = 4;
+  int32 count = 5;  // at least 1
+}
+
+message WearRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  repeated WearEntry entries = 4; // 1..64, each item once
 }
 
 message DropRequest {
@@ -399,6 +441,7 @@ message MoveRequest {
   bytes lease_token = 3;
   string item_id = 4;
   int32 slot = 5;
+  ItemContainer container = 6;  // unset = the backpack (2.6)
 }
 
 message StashMoveRequest {

@@ -69,10 +69,16 @@ public sealed class LedgerHarness : IAsyncDisposable
     }
 
     /// <summary>Mints an item straight into a backpack, as an admin gift would.</summary>
-    public async Task<ItemRecord> Give(string characterId, int tier = 0, int slot = -1)
+    public async Task<ItemRecord> Give(string characterId, int tier = 0, int slot = -1, string? baseType = null, int count = 1)
     {
         var rolled = Rules.RollItem(new ItemRollContext("scout", 10, 3, 15, tier, "depth3", "test"), (ulong)Random.Shared.NextInt64());
-        var used = (await R(tx => tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Character, OwnerId: characterId)))).Select(i => i.Slot).ToHashSet();
+        if (baseType is not null || count != 1)
+        {
+            rolled = rolled with { BaseType = baseType ?? rolled.BaseType, Count = count };
+            rolled = rolled with { Instance = FakeGameRules.ItemCodec.Encode(rolled) };
+        }
+        var used = (await R(tx => tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Character, OwnerId: characterId))))
+            .Where(i => i.Container == ItemContainer.Backpack).Select(i => i.Slot).ToHashSet();
         if (slot < 0) slot = Enumerable.Range(0, 100).First(s => !used.Contains(s));
         return await W(tx => tx.Items.Mint(new NewItem(rolled.Seed, rolled.BaseType, rolled.Rarity, rolled.ItemLevel, rolled.Count, rolled.Identified,
             rolled.Instance, rolled.SchemaVersion, rolled.Tier, 10), OwnerKind.Character, characterId, null, slot, "admin", null));

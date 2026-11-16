@@ -1,3 +1,4 @@
+using SourceSharp.Host.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using SourceSharp.Host.Abstractions;
 using SourceSharp.Host.FakeGame.Control;
@@ -91,7 +92,8 @@ public class TravelEndToEndFacts
         Assert.All(w.Hops.Seen, s => Assert.False(s.LeaseHeldBySource)); // PrepareHop: checkpoint + release before HopReady
 
         var before = (Inventories: await Inventories(w, a, b), Live: await w.LiveOutsideReserves());
-        Assert.Equal(3, (await w.Backpack(a.CharacterId)).Count + (await w.Backpack(b.CharacterId)).Count);
+        // Three picked up, in backpack cells; the starting kits ride on the belts (and in Inventories).
+        Assert.Equal(3, (await w.Backpack(a.CharacterId)).Concat(await w.Backpack(b.CharacterId)).Count(i => i.Container == ItemContainer.Backpack));
 
         var l2 = await Descend(w, l1.Id, a, 2, party, a, b);
         Assert.Equal((2, "L2-a"), (l2.Depth, l2.LevelHash));

@@ -49,9 +49,14 @@ internal sealed class Rpc : IDisposable
 
     public static string NewRequestId() => Guid.NewGuid().ToString("N");
 
-    /// <summary>A mutating or reading call; <paramref name="attempts"/> bounds the retries (the default from the options).</summary>
-    public async Task<HostResult<T>> Call<T>(Func<Metadata, DateTime, CancellationToken, AsyncUnaryCall<T>> call, int? attempts = null)
+    /// <summary>
+    /// A mutating or reading call; <paramref name="attempts"/> bounds the retries (the default from the options).
+    /// The instance identity is read once, when the call starts (or given as <paramref name="auth"/>), and every
+    /// retry re-sends it: a same-process hop's rebind never turns a retry into the next instance's call.
+    /// </summary>
+    public async Task<HostResult<T>> Call<T>(Func<Metadata, DateTime, CancellationToken, AsyncUnaryCall<T>> call, int? attempts = null, Metadata? auth = null)
     {
+        auth ??= Auth();
         var max = Math.Max(1, attempts ?? _options.RpcAttempts);
         var backoff = _options.RetryBackoff;
         RpcException? last = null;
@@ -69,7 +74,7 @@ internal sealed class Rpc : IDisposable
             var sw = Stopwatch.StartNew();
             try
             {
-                var value = await call(Auth(), DateTime.UtcNow + _options.RpcTimeout, _stopping).ResponseAsync.ConfigureAwait(false);
+                var value = await call(auth, DateTime.UtcNow + _options.RpcTimeout, _stopping).ResponseAsync.ConfigureAwait(false);
                 _metrics.Latency(sw.Elapsed);
                 return HostResult<T>.Success(value);
             }

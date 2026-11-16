@@ -70,6 +70,28 @@ public class ItemFacts
     }
 
     [Fact]
+    public async Task Move_into_an_equip_slot_reports_the_container()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var item = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
+        var r = await w.Level.Pumped(w.Level.Items.Move(lease, item.Id, HostContainer.Equipped, 2));
+        Assert.Equal((HostContainer.Equipped, 2), (r.Value.Container, r.Value.Slot));
+    }
+
+    [Fact]
+    public async Task Move_refused_by_the_rules_carries_their_reason()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var item = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
+        var r = await w.Level.Pumped(w.Level.Items.Move(lease, item.Id, HostContainer.Belt, 3)); // 0-2 hold the starting kit
+        Assert.Equal("potions_only", r.Refusal!.Reason);
+    }
+
+    [Fact]
     public async Task StashMove_puts_an_item_in_the_shared_stash_and_GetStash_lists_it()
     {
         await using var h = await SdkHarness.Start();
@@ -89,7 +111,9 @@ public class ItemFacts
         var w = await Start(h);
         var item = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
         var r = await w.Hub.Pumped(w.Hub.Items.GetBackpack(w.Character.Id));
-        Assert.Equal([item.Id], r.Value.Select(i => i.Id));
+        // Everything carried comes back; the starting kit is on the belt.
+        Assert.Equal([item.Id], r.Value.Where(i => i.Container == HostContainer.Backpack).Select(i => i.Id));
+        Assert.Equal(3, r.Value.Count(i => i.Container == HostContainer.Belt));
     }
 
     [Fact]
@@ -191,6 +215,100 @@ public class ItemFacts
     }
 
     [Fact]
+    public async Task A_field_repair_keeps_the_item_and_consumes_the_kit()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var item = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
+        var kit = await MintKit(h, w.Character.Id, 1);
+        var r = await w.Level.Pumped(w.Level.Items.Repair(lease, item.Id, HostRepairKind.Field, kit.Id));
+        Assert.True(r.Ok, r.ToString());
+        Assert.Equal(item.Id, r.Value.Id);
+        Assert.Equal(ItemState.Consumed, (await Row(h, kit.Id))!.State);
+    }
+
+    [Fact]
+    public async Task A_town_repair_on_a_level_is_refused()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var item = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
+        var r = await w.Level.Pumped(w.Level.Items.Repair(lease, item.Id));
+        Assert.Equal("not_a_hub", r.Refusal!.Reason);
+    }
+
+    [Fact]
+    public async Task Wear_lowers_each_items_durability()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var a = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
+        var b = await Mint(h, OwnerKind.Character, w.Character.Id, null, 1);
+        var r = await w.Level.Pumped(w.Level.Items.Wear(lease, [new HostWear(a.Id, 10), new HostWear(b.Id, 20)]));
+        Assert.True(r.Ok, r.ToString());
+        var durability = r.Value.Select(i => SourceSharp.Host.Testing.FakeGameRules.ItemCodec.DurabilityOf(
+            h.Rules.Items.Decode(i.Instance.Data, (int)i.Instance.SchemaVersion)).Durability).ToList();
+        Assert.Equal([90, 80], durability);
+    }
+
+    [Fact]
+    public async Task OpenContainer_mints_the_replayed_roll_to_the_floor_once()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var level = (await h.Data.ReadAsync((tx, _) => tx.Instances.Get("lvl-1")))!;
+        var c = (await h.Data.ReadAsync((tx, _) => tx.Characters.Get(w.Character.Id)))!;
+        var seq = Enumerable.Range(0, 1000).Select(i => (uint)i)
+            .First(s => h.Rules.ContainerDrops(level.Seed, s, level.Depth, new CharacterSheet(c.Sheet, c.SheetVersion)).Count > 0);
+        var r = await w.Level.Pumped(w.Level.Items.OpenContainer(lease, seq));
+        Assert.Equal((HostOwnerKind.World, w.Character.Id), (Assert.Single(r.Value).Owner, r.Value[0].ForCharacter));
+        var again = await w.Level.Pumped(w.Level.Items.OpenContainer(lease, seq));
+        Assert.Equal("already_opened", again.Refusal!.Reason);
+    }
+
+    static Task<ItemRecord> MintStack(SdkHarness h, string characterId, int count)
+    {
+        var r = h.Rules.RollItem(new ItemRollContext("scout", 1, 1, 5, 0, "depth1", "test"), (ulong)Random.Shared.NextInt64())
+            with { BaseType = "health_small", Count = count };
+        return h.Data.WriteAsync((tx, _) => tx.Items.Mint(new NewItem(r.Seed, r.BaseType, r.Rarity, r.ItemLevel, count, true,
+            FakeGameRules_Encode(r), 1, 0, 1), OwnerKind.Character, characterId, null, 0, "test", null));
+    }
+
+    [Fact]
+    public async Task Consume_lowers_a_stack()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var stack = await MintStack(h, w.Character.Id, 3);
+        var r = await w.Level.Pumped(w.Level.Items.Consume(lease, stack.Id));
+        Assert.Equal((HostItemState.Live, 2), (r.Value.State, r.Value.Count));
+    }
+
+    [Fact]
+    public async Task Consume_of_the_last_one_reports_it_consumed()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var stack = await MintStack(h, w.Character.Id, 2);
+        var r = await w.Level.Pumped(w.Level.Items.Consume(lease, stack.Id, 2));
+        Assert.Equal(HostItemState.Consumed, r.Value.State);
+    }
+
+    static Task<ItemRecord> MintKit(SdkHarness h, string characterId, int slot)
+    {
+        var r = h.Rules.RollItem(new ItemRollContext("scout", 1, 1, 5, 0, "depth1", "test"), (ulong)Random.Shared.NextInt64())
+            with { BaseType = SourceSharp.Host.Testing.FakeGameRules.RepairKit };
+        return h.Data.WriteAsync((tx, _) => tx.Items.Mint(new NewItem(r.Seed, r.BaseType, r.Rarity, r.ItemLevel, 1, true,
+            FakeGameRules_Encode(r), 1, 0, 1), OwnerKind.Character, characterId, null, slot, "test", null));
+    }
+
+    [Fact]
     public async Task Salvage_turns_an_item_into_metal()
     {
         await using var h = await SdkHarness.Start();
@@ -209,9 +327,12 @@ public class ItemFacts
         var lease = await Lease(w.Level, w.Character.Id);
         var item = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
         var died = await w.Level.Pumped(w.Level.Items.RecordDeath(lease));
-        Assert.Equal(HostOwnerKind.Corpse, Assert.Single(died.Value).Owner);
+        // The item and the starting kit on the belt.
+        Assert.Equal(4, died.Value.Count);
+        Assert.All(died.Value, i => Assert.Equal(HostOwnerKind.Corpse, i.Owner));
         var looted = await w.Level.Pumped(w.Level.Items.LootCorpse(lease));
-        Assert.Equal((item.Id, HostOwnerKind.Character), (Assert.Single(looted.Value).Id, looted.Value[0].Owner));
+        Assert.Contains(item.Id, looted.Value.Select(i => i.Id));
+        Assert.All(looted.Value, i => Assert.Equal((HostOwnerKind.Character, HostContainer.Backpack), (i.Owner, i.Container)));
     }
 
     [Fact]

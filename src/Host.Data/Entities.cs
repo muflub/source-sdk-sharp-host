@@ -1,4 +1,5 @@
 using SourceSharp.Host.Abstractions;
+using ItemContainer = SourceSharp.Host.Contracts.ItemContainer;
 
 namespace SourceSharp.Host.Data;
 
@@ -76,9 +77,10 @@ internal sealed class ItemRow
     public string? TerminalReason { get; set; }
     public DateTimeOffset? TerminalAt { get; set; }
     public bool AdminEdited { get; set; }
+    public ItemContainer Container { get; set; }
 
     public ItemRecord ToRecord() => new(Id, Seed, BaseType, Rarity, ItemLevel, Count, Identified, Instance, SchemaVersion,
-        ForCharacter, OwnerKind, OwnerId, Slot, InstanceId, Tier, RolledForLevel, MintedBy, MintedAt, Version, State, TerminalReason, AdminEdited);
+        ForCharacter, OwnerKind, OwnerId, Slot, InstanceId, Tier, RolledForLevel, MintedBy, MintedAt, Version, State, TerminalReason, AdminEdited, Container);
 }
 
 internal sealed class ItemEventRow
