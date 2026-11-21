@@ -114,6 +114,7 @@ public class SameProcessHopFacts
         var boot = await sdk.Pumped(sdk.Session.Booting("tf2_descent_town"));
         Assert.False(boot.Ok);
         Assert.Equal("not_booting", boot.Refusal!.Reason);
+        Assert.Equal(HostError.NotBooting, boot.Error);
         Assert.Equal("hub-1", sdk.Endpoint.InstanceId);
     }
 }

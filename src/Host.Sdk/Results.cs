@@ -42,6 +42,10 @@ public enum HostError
     NoAnchor,
     /// <summary>A teleporter goes on a level; the hub asked.</summary>
     NotALevel,
+    // 2.8.1. Appended.
+    /// <summary><c>Booting</c> (or a first <c>MapReady</c>) on an instance not marked booting: passing early in a boot (retry it as
+    /// <see cref="Rejected"/>), lasting on a live one (a <c>changelevel</c> no hop began keeps its boot, doc §6).</summary>
+    NotBooting,
 }
 
 /// <summary>A refusal: the typed error, the wire reason (or the SDK's own), the human text, and whether it was decided locally.</summary>
@@ -61,6 +65,7 @@ public sealed record HostRefusal(HostError Error, string Reason, string Detail, 
         ["version_mismatch"] = HostError.VersionMismatch, ["store_full"] = HostError.StoreFull, ["value_too_large"] = HostError.ValueTooLarge,
         ["key_too_long"] = HostError.KeyTooLong, ["no_level"] = HostError.NoLevel, ["not_your_level"] = HostError.NotYourLevel,
         ["no_anchor"] = HostError.NoAnchor, ["not_a_level"] = HostError.NotALevel,
+        ["not_booting"] = HostError.NotBooting,
     };
 
     /// <summary>The status codes that mean "try again with the same request id", never a business answer.</summary>

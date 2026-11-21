@@ -203,6 +203,12 @@ has `h.IsSameProcess` set and `h.Map` names the target's map. The game:
 `Booting` with any other map stays the current instance. The instance the process left is
 reaped when its stream closes, never counted as a crash.
 
+**Only a same-process hop calls `Booting` again.** A `changelevel` that no `PrepareHop` began
+(an admin's console command, a map vote) is still the same instance: keep its boot (the
+`BootInfo` you already have) and call only `MapReady` once the map is up; with the port
+unchanged it answers live at once. `Booting` there is refused `HostError.NotBooting`
+(`not_booting`, detail `instance … is Live`) for as long as you retry it.
+
 ## 7. Items, kills, travel
 
 - **Kill drop (the hot path, no I/O):** roll with your rules (`KillRoll(info.InstanceSeed,
@@ -253,6 +259,20 @@ Every 1.2 member has a default body; a 1.0 or 1.1 rules module still loads and b
 | `Break(lease, breakableSeq)` once per hero in the room, each with their own lease; numbered apart from containers | `BreakableDrops(instanceSeed, breakableSeq, depth, opener)` → `BreakableRoll(Australium, Items)`; the empty roll for a blast, a cloud or an ambush | replays each hero's roll: Australium credited to them, items to the floor for them (`HostBreak`). Once per breakable and hero, `already_broken` after, even when the roll was empty |
 | `Swap(lease, a, b)`: equip ↔ backpack, belt ↔ backpack, an equip through a full backpack | `PlaceRefusal` for both destinations | exchanges the two items' container and slot in one write; one refusal refuses both |
 | `Merge(lease, from, into)`: two partial stacks | `Merge(source, target)`: `[target]` with the source `Consumed`, or `[target, what is left]`, re-encoded | keeps the count (`rules_bad_merge` if the two stacks' total changes); returns [into, from]. Without the member, `unsupported` |
+
+### SDK 2.8.1
+
+`HostError.NotBooting` names the `not_booting` refusal, which until 2.8.0 came back as
+`Rejected`: `Booting` (or a first `MapReady`) on an instance whose row is not `Booting`.
+
+- **Early in a boot it passes:** the process can call `Booting` before the service has marked
+  the instance booting (detail `instance … is Creating`). **Retry `NotBooting` the way you
+  retry `Rejected`.** A game that retries only `Unreachable` and `Rejected` and gives up on
+  anything else now gives up on a boot that would have gone through a second later.
+- **On a live instance it never passes:** detail `instance … is Live`. The usual cause is
+  calling `Booting` at a level start that no hop began (§6).
+
+No proto or contract change.
 
 ## 8. What the pod gives the process
 
