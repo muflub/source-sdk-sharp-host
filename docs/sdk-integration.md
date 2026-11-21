@@ -240,7 +240,19 @@ the members to get the behavior:
 
 Also in 2.7.0: a call keeps the instance identity it started with, so a `Reveal` still
 retrying across a same-process hop lands on the level the kill happened on (or is refused),
-never the next one. Australium on the floor (one pile shared on pickup) is 2.8.0.
+never the next one.
+
+### SDK 2.8.0 / Contracts 1.2.0 (plan_sdk_2_8)
+
+Every 1.2 member has a default body; a 1.0 or 1.1 rules module still loads and behaves as before.
+
+| game side (`IItems`, with the lease) | rules side (`IGameRules`, 1.2) | what the host does |
+|---|---|---|
+| `KillAustralium(killer, killSeq, robot, partySize, position)` for **every** kill whose roll has Australium, item or not; then `ClaimAustralium(lease, pileId)` when a hero walks over it (`HostItem.IsAustraliumPile`, base type `host:australium`) | `AustraliumShares(total, killerFirst)`: one share per member, in order (the split plus each one's found share) | mints one floor pile per kill (`already_minted` after; `no_australium` for a roll of none). The pickup, by the killer or one of their party, credits every party member on the level their share at once (each 0..the pile, else `rules_bad_shares`) and ends the pile. `Claim` refuses a pile (`australium_pile`). **The 2.8 SDK's `Reveal` credits nothing** (it sets `australium_pile`), so a game that does not call `KillAustralium` pays no kill Australium. Without the member, every member gets the whole roll |
+| nothing new: `Repair` as in 2.7 | `Repair(item, kind, kit, sheet, seed)`: the repairer's sheet | the rules size a field repair by the hero and price a town repair by their perks: a waived price (`town_free`) is `Cost = 0`. There is no host waiver call |
+| `Break(lease, breakableSeq)` once per hero in the room, each with their own lease; numbered apart from containers | `BreakableDrops(instanceSeed, breakableSeq, depth, opener)` → `BreakableRoll(Australium, Items)`; the empty roll for a blast, a cloud or an ambush | replays each hero's roll: Australium credited to them, items to the floor for them (`HostBreak`). Once per breakable and hero, `already_broken` after, even when the roll was empty |
+| `Swap(lease, a, b)`: equip ↔ backpack, belt ↔ backpack, an equip through a full backpack | `PlaceRefusal` for both destinations | exchanges the two items' container and slot in one write; one refusal refuses both |
+| `Merge(lease, from, into)`: two partial stacks | `Merge(source, target)`: `[target]` with the source `Consumed`, or `[target, what is left]`, re-encoded | keeps the count (`rules_bad_merge` if the two stacks' total changes); returns [into, from]. Without the member, `unsupported` |
 
 ## 8. What the pod gives the process
 

@@ -95,7 +95,7 @@ public sealed class ItemApi(IHostData data, DescentLedger ledger, Travel.TravelC
             return await data.Idempotent(context, request.RequestId, P.RevealResponse.Parser, async (tx, caller) =>
             {
                 var (item, booked) = await ledger.Reveal(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemId,
-                    request.KillSeq, request.RobotTemplate, request.NearbyMembers, request.RequestId);
+                    request.KillSeq, request.RobotTemplate, request.NearbyMembers, request.RequestId, request.AustraliumPile);
                 return new P.RevealResponse { Item = item.ToProto(), AustraliumBooked = booked };
             });
         }
@@ -174,6 +174,37 @@ public sealed class ItemApi(IHostData data, DescentLedger ledger, Travel.TravelC
             (await ledger.Repair(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemId,
                 request.RepairKind == P.RepairKind.Field ? RepairKind.Field : RepairKind.Town,
                 string.IsNullOrEmpty(request.KitId) ? null : request.KitId, request.RequestId)).ToProto());
+
+    public override Task<P.Item> KillAustralium(P.KillAustraliumRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.Item.Parser, async (tx, caller) =>
+            (await ledger.KillAustralium(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.KillSeq, request.RobotTemplate,
+                request.PartySize, request.RequestId)).ToProto());
+
+    public override Task<P.AustraliumPickup> ClaimAustralium(P.ItemActionRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.AustraliumPickup.Parser, async (tx, caller) =>
+        {
+            var pickup = new P.AustraliumPickup();
+            foreach (var (id, amount) in await ledger.ClaimAustralium(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemId, request.RequestId))
+                pickup.Credits.Add(new P.AustraliumCredit { CharacterId = id, Amount = amount });
+            return pickup;
+        });
+
+    public override Task<P.BreakResponse> Break(P.BreakRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.BreakResponse.Parser, async (tx, caller) =>
+        {
+            var (australium, items) = await ledger.Break(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.BreakableSeq, request.RequestId);
+            var response = new P.BreakResponse { Australium = australium };
+            response.Items.AddRange(items.Select(i => i.ToProto()));
+            return response;
+        });
+
+    public override Task<P.ItemsResponse> Merge(P.MergeRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>
+            (await ledger.Merge(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.FromItemId, request.IntoItemId, request.RequestId)).ToProto());
+
+    public override Task<P.ItemsResponse> Swap(P.SwapRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>
+            (await ledger.Swap(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemA, request.ItemB, request.RequestId)).ToProto());
 
     public override Task<P.ItemsResponse> OpenContainer(P.OpenContainerRequest request, ServerCallContext context) =>
         data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>

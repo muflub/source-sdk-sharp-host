@@ -101,11 +101,12 @@ public class ServiceOptionsFacts
     [Fact]
     public void Contract_supports_same_major_and_not_newer_minor()
     {
-        // Contract 1.1: a module built on 1.0 or 1.1 loads; 1.1's members all have default bodies.
+        // Contract 1.2: a module built on 1.0, 1.1 or 1.2 loads; every member since 1.0 has a default body.
         Assert.True(SourceSharp.Host.Contracts.HostContract.Supports("1.0.0"));
         Assert.True(SourceSharp.Host.Contracts.HostContract.Supports("1.1.0"));
+        Assert.True(SourceSharp.Host.Contracts.HostContract.Supports("1.2.0"));
         Assert.False(SourceSharp.Host.Contracts.HostContract.Supports("2.0.0"));
-        Assert.False(SourceSharp.Host.Contracts.HostContract.Supports("1.2.0"));
+        Assert.False(SourceSharp.Host.Contracts.HostContract.Supports("1.3.0"));
         Assert.False(SourceSharp.Host.Contracts.HostContract.Supports("garbage"));
     }
 }

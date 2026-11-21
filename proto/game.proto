@@ -333,6 +333,16 @@ service ItemService {
   // SDK 2.7: a world container opened by one character; the host replays the rules' roll from the
   // instance seed and mints it to this floor for the opener. Once per (instance, container, character).
   rpc OpenContainer(OpenContainerRequest) returns (ItemsResponse);
+  // SDK 2.8: two carried items exchange their container and slot (an equip through a full backpack).
+  rpc Swap(SwapRequest) returns (ItemsResponse);
+  // SDK 2.8: two stacks of one kind become one, as the rules say; returns [into, from] (from CONSUMED when used up).
+  rpc Merge(MergeRequest) returns (ItemsResponse);
+  // SDK 2.8: a breakable broken by one hero; their own replayed roll (Australium credited, items to the floor for them).
+  rpc Break(BreakRequest) returns (BreakResponse);
+  // SDK 2.8: a kill's Australium as one floor pile (base type "host:australium"), for every kill with Australium.
+  rpc KillAustralium(KillAustraliumRequest) returns (Item);
+  // SDK 2.8: a pile picked up; the killer's party on the level is credited their shares (item_id = the pile).
+  rpc ClaimAustralium(ItemActionRequest) returns (AustraliumPickup);
 }
 
 message TierCount {
@@ -363,6 +373,7 @@ message RevealRequest {
   string robot_template = 6;
   repeated string nearby_members = 7; // character ids sharing the Australium (R4)
   Vec3 position = 8;
+  bool australium_pile = 9;  // SDK 2.8: the kill's Australium is a pile (KillAustralium), so Reveal credits none
 }
 
 message RevealResponse {
@@ -403,6 +414,51 @@ enum RepairKind {
 message WearEntry {
   string item_id = 1;
   int32 amount = 2;
+}
+
+message KillAustraliumRequest {
+  string request_id = 1;
+  string character_id = 2;   // the killer
+  bytes lease_token = 3;
+  uint32 kill_seq = 4;
+  string robot_template = 5;
+  int32 party_size = 6;      // as KillRoll takes it
+  Vec3 position = 7;
+}
+
+message AustraliumCredit {
+  string character_id = 1;
+  int64 amount = 2;
+}
+
+message AustraliumPickup { repeated AustraliumCredit credits = 1; }
+
+message BreakRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  uint32 breakable_seq = 4;  // the breakable's number on this level, apart from the containers'
+}
+
+message BreakResponse {
+  int64 australium = 1;      // credited to the hero
+  repeated Item items = 2;   // on the floor, for_character = the hero
+}
+
+message MergeRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string from_item_id = 4;
+  string into_item_id = 5;
+}
+
+message SwapRequest {
+  string request_id = 1;
+  string character_id = 2;
+  bytes lease_token = 3;
+  string item_a = 4;
+  string item_b = 5;
 }
 
 message OpenContainerRequest {

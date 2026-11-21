@@ -137,7 +137,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
     /// once per member (R4).
     /// </summary>
     public async Task<(ItemRecord Item, long Australium)> Reveal(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
-        string itemId, uint killSeq, string robotTemplate, IReadOnlyList<string> nearby, string requestId)
+        string itemId, uint killSeq, string robotTemplate, IReadOnlyList<string> nearby, string requestId, bool australiumPile = false)
     {
         var (_, _) = await Leased(tx, caller, characterId, token);
         var r = RulesFor(caller);
@@ -158,7 +158,8 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         var moved = await tx.Items.Move(new ItemMove(itemId, OwnerKind.Reserve, OwnerKind.World, caller.Id, revealKind,
             InstanceId: caller.Id, RequestId: requestId));
         var booked = 0L;
-        if (roll.Australium > 0)
+        // plan_sdk_2_8 §1: a 2.8 game drops the kill's Australium as a pile (KillAustralium); only a 2.7 game is credited here.
+        if (roll.Australium > 0 && !australiumPile)
         {
             var reference = $"kill:{caller.Id}:{killSeq}";
             foreach (var member in nearby.Prepend(characterId).Distinct())
@@ -247,6 +248,105 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         return minted;
     }
 
+    public const string BreakableOpenedAction = "breakable.opened";
+
+    /// <summary>
+    /// plan_sdk_2_8 §3: one breakable broken by one hero. The rules' roll is replayed from the instance
+    /// seed; its Australium is credited to the hero (their own roll, nothing to share) and its items go
+    /// to this floor for them alone. Once per (instance, breakable, character), recorded even when the
+    /// roll is empty. Every hero in the room breaks it with their own lease (the game's R4).
+    /// </summary>
+    public async Task<(long Australium, IReadOnlyList<ItemRecord> Items)> Break(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
+        uint breakableSeq, string requestId)
+    {
+        var (ch, _) = await Leased(tx, caller, characterId, token);
+        var r = RulesFor(caller);
+        var target = $"{caller.Id}:{breakableSeq}:{characterId}";
+        if (await tx.Audit.Count(new AuditQuery(Action: BreakableOpenedAction, Target: target)) > 0)
+            throw HostRefusal.Precondition("already_broken", $"breakable {breakableSeq} of {caller.Id} was broken by {characterId}");
+        var roll = r.BreakableDrops(caller.Seed, breakableSeq, caller.Depth, Sheet(ch));
+        if (roll.Australium < 0) throw HostRefusal.Precondition("rules_bad_breakable", $"breakable {breakableSeq} rolls {roll.Australium} Australium");
+        if (roll.Australium > 0)
+            await tx.Characters.AddAustralium(characterId, roll.Australium, "breakable", $"breakable:{caller.Id}:{breakableSeq}");
+        var minted = new List<ItemRecord>();
+        foreach (var drop in roll.Items)
+            minted.Add(await tx.Items.Mint(ToNew(drop, ch.Level, characterId), OwnerKind.World, caller.Id, caller.Id, -1, "breakable", requestId));
+        await tx.Audit.Write(BreakableOpenedAction, target, null, new { australium = roll.Australium, items = minted.Select(i => i.Id).ToArray() });
+        return (roll.Australium, minted);
+    }
+
+    // ------------------------------------------------------------------ the Australium pile (plan_sdk_2_8 §1)
+
+    /// <summary>A kill's Australium on the floor: a host item the rules never decode (the <c>host:</c> prefix is reserved).</summary>
+    public const string AustraliumPile = "host:australium";
+    public const string PileMintedAction = "australium.minted";
+    public const string PilePickupAction = "australium.pickup";
+
+    sealed record PileData(string Killer, uint KillSeq, string Robot);
+
+    /// <summary>
+    /// One pile per kill: the host replays the kill's roll and mints its Australium to this floor, for
+    /// the killer's party to pick up. Called for every kill with Australium, item or not. Once per
+    /// (instance, kill), already_minted after; a roll of none is no_australium.
+    /// </summary>
+    public async Task<ItemRecord> KillAustralium(IWriteTx tx, InstanceRecord caller, string killerId, byte[] token,
+        uint killSeq, string robotTemplate, int partySize, string requestId)
+    {
+        await Leased(tx, caller, killerId, token);
+        var r = RulesFor(caller);
+        var target = $"{caller.Id}:{killSeq}";
+        if (await tx.Audit.Count(new AuditQuery(Action: PileMintedAction, Target: target)) > 0)
+            throw HostRefusal.Precondition("already_minted", $"kill {killSeq} of {caller.Id} already has its pile");
+        var roll = r.KillRoll(caller.Seed, killSeq, robotTemplate, caller.Depth, Math.Max(1, partySize));
+        if (roll.Australium <= 0) throw HostRefusal.Precondition("no_australium", $"kill {killSeq} of {robotTemplate} rolls no Australium");
+        var data = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new PileData(killerId, killSeq, robotTemplate));
+        var pile = await tx.Items.Mint(new NewItem(0, AustraliumPile, 0, 0, (int)Math.Min(int.MaxValue, roll.Australium), true, data, 0),
+            OwnerKind.World, caller.Id, caller.Id, -1, "australium", requestId);
+        await tx.Audit.Write(PileMintedAction, target, null, new { pile = pile.Id, killer = killerId, australium = roll.Australium });
+        return pile;
+    }
+
+    /// <summary>
+    /// A pile picked up: the killer's party members on this level (killer first when here) are each
+    /// credited their share, as the rules divide it, in this one write; the pile ends. Only the killer
+    /// or one of their party may pick it up.
+    /// </summary>
+    public async Task<IReadOnlyList<(string CharacterId, long Amount)>> ClaimAustralium(IWriteTx tx, InstanceRecord caller, string characterId,
+        byte[] token, string pileId, string requestId)
+    {
+        await Leased(tx, caller, characterId, token);
+        var r = RulesFor(caller);
+        var pile = await tx.Items.Get(pileId) ?? throw HostRefusal.NotFound("no_item", pileId);
+        if (pile.BaseType != AustraliumPile) throw new HostRefusal(RefusalCode.InvalidArgument, "not_a_pile", $"{pileId} is not an Australium pile");
+        if (pile.State != ItemState.Live || pile.OwnerKind != OwnerKind.World || pile.InstanceId != caller.Id)
+            throw HostRefusal.Precondition("wrong_owner", $"{pileId} is not on {caller.Id}'s floor");
+        var data = System.Text.Json.JsonSerializer.Deserialize<PileData>(pile.Instance)!;
+        var party = await tx.Parties.ForCharacter(data.Killer);
+        var members = party is null ? [data.Killer] : party.Members.Prepend(data.Killer).Distinct().ToList();
+        if (!members.Contains(characterId))
+            throw HostRefusal.Denied("not_in_party", $"{characterId} is not in the party of {data.Killer}, who made {pileId}");
+        var here = new List<CharacterRecord>();
+        foreach (var id in members)
+        {
+            if ((await tx.Leases.Get(id))?.InstanceId != caller.Id) continue; // only members on this level share
+            if (await tx.Characters.Get(id) is { Deleted: false } c) here.Add(c);
+        }
+        var shares = r.AustraliumShares(pile.Count, here.Select(Sheet).ToList());
+        if (shares.Count != here.Count || shares.Any(s => s < 0 || s > pile.Count))
+            throw HostRefusal.Precondition("rules_bad_shares", $"{here.Count} members, each 0..{pile.Count}; the rules gave [{string.Join(",", shares)}]");
+        var credits = new List<(string, long)>();
+        for (var i = 0; i < here.Count; i++)
+        {
+            var reference = $"pile:{pileId}";
+            if (shares[i] == 0 || await tx.Characters.HasAustraliumRef(here[i].Id, reference)) continue;
+            await tx.Characters.AddAustralium(here[i].Id, shares[i], "kill", reference);
+            credits.Add((here[i].Id, shares[i]));
+        }
+        await tx.Items.Terminate(pileId, OwnerKind.World, ItemState.Consumed, "australium_pickup", requestId);
+        await tx.Audit.Write(PilePickupAction, pileId, null, new { by = characterId, total = pile.Count, credits = credits.Select(c => new { character = c.Item1, amount = c.Item2 }) });
+        return credits;
+    }
+
     /// <summary>§5.2a level-up: tiers whose rolled level is StaleLevels or more below the new level are swept.</summary>
     public async Task<IReadOnlyList<int>> SweepStaleTiers(IWriteTx tx, string characterId, string instanceId, int newLevel)
     {
@@ -267,6 +367,8 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         var item = await tx.Items.Get(itemId) ?? throw HostRefusal.NotFound("no_item", itemId);
         if (item.ForCharacter is { } owner && owner != characterId)
             throw HostRefusal.Denied("wrong_owner", $"{itemId} dropped for {owner}");
+        if (item.BaseType == AustraliumPile)
+            throw HostRefusal.Precondition("australium_pile", $"{itemId} is an Australium pile: ClaimAustralium");
         var slot = await FreeSlot(tx, r, ch);
         CheckPlace(r, ch, Decode(r, item), ItemContainer.Backpack, slot);
         return await tx.Items.Move(new ItemMove(itemId, OwnerKind.World, OwnerKind.Character, characterId, "claim",
@@ -304,6 +406,56 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         CheckPlace(r, ch, Decode(r, item), container, slot);
         return await tx.Items.Move(new ItemMove(itemId, OwnerKind.Character, OwnerKind.Character, characterId, "move",
             Slot: slot, RequestId: requestId, Container: container));
+    }
+
+    /// <summary>
+    /// plan_sdk_2_8 §4: two carried items exchange their (container, slot) in one transaction, each
+    /// destination asked of the rules; one refusal refuses both. How an equip goes through a full
+    /// backpack: the displaced item takes the cell the new one left.
+    /// </summary>
+    public async Task<IReadOnlyList<ItemRecord>> Swap(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
+        string itemA, string itemB, string requestId)
+    {
+        var (ch, _) = await Leased(tx, caller, characterId, token);
+        if (itemA == itemB) throw new HostRefusal(RefusalCode.InvalidArgument, "bad_items", "a swap names two different items");
+        var a = await Owned(tx, itemA, characterId);
+        var b = await Owned(tx, itemB, characterId);
+        var r = RulesFor(caller);
+        CheckPlace(r, ch, Decode(r, a), b.Container, b.Slot);
+        CheckPlace(r, ch, Decode(r, b), a.Container, a.Slot);
+        var movedA = await tx.Items.Move(new ItemMove(a.Id, OwnerKind.Character, OwnerKind.Character, characterId, "swap",
+            Slot: b.Slot, RequestId: requestId, Container: b.Container));
+        var movedB = await tx.Items.Move(new ItemMove(b.Id, OwnerKind.Character, OwnerKind.Character, characterId, "swap",
+            Slot: a.Slot, RequestId: requestId, Container: a.Container));
+        return [movedA, movedB];
+    }
+
+    /// <summary>
+    /// plan_sdk_2_8 §4: two carried stacks become one, as the rules' <c>Merge</c> says. The counts
+    /// must be conserved (a merge never makes or loses any); <c>into</c> and what is left of
+    /// <c>from</c> are rewritten in place, or <c>from</c> is ended when it is used up. Returns [into, from].
+    /// </summary>
+    public async Task<IReadOnlyList<ItemRecord>> Merge(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
+        string fromId, string intoId, string requestId)
+    {
+        await Leased(tx, caller, characterId, token);
+        if (fromId == intoId) throw new HostRefusal(RefusalCode.InvalidArgument, "bad_items", "a merge names two different items");
+        var source = await Owned(tx, fromId, characterId);
+        var target = await Owned(tx, intoId, characterId);
+        var r = RulesFor(caller);
+        var change = r.Merge(Decode(r, source), Decode(r, target));
+        if (!change.Ok) throw HostRefusal.Precondition(change.Refusal!, $"merge of {fromId} into {intoId} refused by the rules");
+        var whole = change.Produced.Count == 1 && change.Consumed is [0];
+        var partial = change.Produced.Count == 2 && change.Consumed.Count == 0;
+        var counts = change.Produced.Sum(p => (long)p.Count);
+        if (change.Cost != 0 || !(whole || partial) || change.Produced.Any(p => p.Count < 1) || counts != (long)source.Count + target.Count)
+            throw HostRefusal.Precondition("rules_bad_merge", $"a merge keeps {source.Count + target.Count} in one or two stacks, costing nothing");
+        var merged = change.Produced[0];
+        var intoAfter = await tx.Items.SetCount(target.Id, target.Version, merged.Count, merged.Instance, merged.SchemaVersion, "merge", requestId);
+        var fromAfter = whole
+            ? await tx.Items.Terminate(source.Id, OwnerKind.Character, ItemState.Consumed, "merge", requestId)
+            : await tx.Items.SetCount(source.Id, source.Version, change.Produced[1].Count, change.Produced[1].Instance, change.Produced[1].SchemaVersion, "merge", requestId);
+        return [intoAfter, fromAfter];
     }
 
     /// <summary>Backpack ↔ shared stash (hub only; capacity from the living characters of the account, D4).</summary>
@@ -446,7 +598,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
     public async Task<ItemRecord> Repair(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
         string itemId, RepairKind kind, string? kitId, string requestId)
     {
-        await Leased(tx, caller, characterId, token);
+        var (ch, _) = await Leased(tx, caller, characterId, token);
         if (kind == RepairKind.Town) RequireHub(caller);
         var r = RulesFor(caller);
         var item = await Owned(tx, itemId, characterId);
@@ -460,7 +612,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         else if (!string.IsNullOrEmpty(kitId))
             throw new HostRefusal(RefusalCode.InvalidArgument, "bad_kit", "a town repair takes no kit");
 
-        var change = r.Repair(Decode(r, item), kind, kit is null ? null : Decode(r, kit), NewSeed());
+        var change = r.Repair(Decode(r, item), kind, kit is null ? null : Decode(r, kit), Sheet(ch), NewSeed());
         if (!change.Ok) throw HostRefusal.Precondition(change.Refusal!, "repair refused by the rules");
         // Index 0 is the item itself, changed in place whatever the rules say (1.0's Repair returns
         // Consumed = [0]); index 1, the kit, is the only input a repair may terminate.

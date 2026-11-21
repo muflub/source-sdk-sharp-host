@@ -270,6 +270,60 @@ public class ItemFacts
         Assert.Equal("already_opened", again.Refusal!.Reason);
     }
 
+    [Fact]
+    public async Task Swap_exchanges_two_items_places()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var a = await Mint(h, OwnerKind.Character, w.Character.Id, null, 0);
+        var b = await Mint(h, OwnerKind.Character, w.Character.Id, null, 1);
+        await w.Level.Pumped(w.Level.Items.Move(lease, a.Id, HostContainer.Equipped, 2));
+        var r = await w.Level.Pumped(w.Level.Items.Swap(lease, a.Id, b.Id));
+        Assert.Equal([(HostContainer.Backpack, 1), (HostContainer.Equipped, 2)], r.Value.Select(i => (i.Container, i.Slot)));
+    }
+
+    [Fact]
+    public async Task Merge_puts_two_stacks_into_one()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var from = await MintStack(h, w.Character.Id, 2);
+        var into = await MintStack(h, w.Character.Id, 1);
+        var r = await w.Level.Pumped(w.Level.Items.Merge(lease, from.Id, into.Id));
+        Assert.Equal((3, HostItemState.Consumed), (r.Value[0].Count, r.Value[1].State));
+    }
+
+    [Fact]
+    public async Task Break_pays_the_hero_their_replayed_roll_once()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var level = (await h.Data.ReadAsync((tx, _) => tx.Instances.Get("lvl-1")))!;
+        var c = (await h.Data.ReadAsync((tx, _) => tx.Characters.Get(w.Character.Id)))!;
+        var sheet = new CharacterSheet(c.Sheet, c.SheetVersion);
+        var seq = Enumerable.Range(0, 1000).Select(i => (uint)i).First(s => h.Rules.BreakableDrops(level.Seed, s, level.Depth, sheet).Items.Count > 0);
+        var r = await w.Level.Pumped(w.Level.Items.Break(lease, seq));
+        Assert.Equal((HostOwnerKind.World, w.Character.Id), (Assert.Single(r.Value.Items).Owner, r.Value.Items[0].ForCharacter));
+        Assert.Equal("already_broken", (await w.Level.Pumped(w.Level.Items.Break(lease, seq))).Refusal!.Reason);
+    }
+
+    [Fact]
+    public async Task A_kills_pile_is_picked_up_and_credited()
+    {
+        await using var h = await SdkHarness.Start();
+        var w = await Start(h);
+        var lease = await Lease(w.Level, w.Character.Id);
+        var before = (await h.Data.ReadAsync((tx, _) => tx.Characters.Get(w.Character.Id)))!.Australium;
+        var pile = await w.Level.Pumped(w.Level.Items.KillAustralium(lease, 1, "heavy", partySize: 1));
+        Assert.True(pile.Value.IsAustraliumPile, pile.ToString());
+        var credits = await w.Level.Pumped(w.Level.Items.ClaimAustralium(lease, pile.Value.Id));
+        Assert.Equal([new HostAustraliumCredit(w.Character.Id, pile.Value.Count)], credits.Value);
+        Assert.Equal(before + pile.Value.Count, (await h.Data.ReadAsync((tx, _) => tx.Characters.Get(w.Character.Id)))!.Australium);
+    }
+
     static Task<ItemRecord> MintStack(SdkHarness h, string characterId, int count)
     {
         var r = h.Rules.RollItem(new ItemRollContext("scout", 1, 1, 5, 0, "depth1", "test"), (ulong)Random.Shared.NextInt64())

@@ -79,6 +79,31 @@ public sealed class FakeGameRules : IGameRules
         ];
     }
 
+    /// <summary>The split alone: total / members, the remainder one apiece in order (the fake has no Scavenger).</summary>
+    public IReadOnlyList<long> AustraliumShares(long total, IReadOnlyList<CharacterSheet> killerFirst)
+    {
+        var n = killerFirst.Count;
+        return n == 0 ? [] : Enumerable.Range(0, n).Select(i => total / n + (i < total % n ? 1 : 0)).ToList();
+    }
+
+    /// <summary>
+    /// The outcome kind is keyed on (seed, seq, depth), so every hero agrees on it: nothing, Australium
+    /// (depth + the hero's level), a small health potion, or an item rolled for the hero.
+    /// </summary>
+    public BreakableRoll BreakableDrops(ulong instanceSeed, uint breakableSeq, int depth, CharacterSheet opener)
+    {
+        var who = SheetCodec.Read(opener);
+        var seed = Hash("breakable-item", instanceSeed, breakableSeq, who.Name);
+        var row = LevelTable(Math.Max(1, depth));
+        return (Hash("breakable", instanceSeed, breakableSeq, depth) % 4) switch
+        {
+            1 => new(depth + who.Level, []),
+            2 => new(0, [RollItem(new ItemRollContext(who.ClassName, who.Level, depth, row.ItemLevel, 0, "breakable", NamedBase + "health_small"), seed)]),
+            3 => new(0, [RollItem(new ItemRollContext(who.ClassName, who.Level, depth, row.ItemLevel, 0, row.LootTable, "breakable"), seed)]),
+            _ => new(0, []),
+        };
+    }
+
     /// <summary>One container in four holds a small health potion for its opener.</summary>
     public IReadOnlyList<RolledItem> ContainerDrops(ulong instanceSeed, uint containerSeq, int depth, CharacterSheet opener)
     {
@@ -166,6 +191,20 @@ public sealed class FakeGameRules : IGameRules
     public ItemChange Identify(RolledItem item, ulong seed) =>
         item.Identified ? new([], [], 0, "already_identified") : new([0], [Re(item with { Identified = true })], 2);
 
+    /// <summary>The fake's stack limit.</summary>
+    public const int MaxStack = 5;
+
+    /// <summary>Same base type only, up to <see cref="MaxStack"/>; the rest stays in <paramref name="source"/>.</summary>
+    public ItemChange Merge(RolledItem source, RolledItem target)
+    {
+        if (source.BaseType != target.BaseType) return new([], [], 0, "not_same_kind");
+        if (target.Count >= MaxStack) return new([], [], 0, "stack_full");
+        var total = source.Count + target.Count;
+        var kept = Math.Min(MaxStack, total);
+        var merged = Re(target with { Count = kept });
+        return total == kept ? new([0], [merged], 0) : new([], [merged, Re(source with { Count = total - kept })], 0);
+    }
+
     /// <summary>A stack loses <paramref name="count"/>; at 0 the item is gone.</summary>
     public ItemChange Consume(CharacterSheet sheet, RolledItem item, int count) =>
         count < 1 || count > item.Count ? new([], [], 0, "bad_count")
@@ -194,6 +233,21 @@ public sealed class FakeGameRules : IGameRules
         var newMax = Math.Max(0, max - Math.Max(max / (level + 9), 1));
         var restored = Math.Min(newMax, d + level + (int)(seed % (ulong)level));
         return new([1], [ItemCodec.WithDurability(item, restored, newMax)], 0);
+    }
+
+    /// <summary>A hero at this level or above repairs in town for free (the fake's stand-in for a perk like town_free).</summary>
+    public const int TownFreeLevel = 50;
+
+    /// <summary>The 1.1 repair, with the hero: a field repair restores the hero's level more; a town repair is free from <see cref="TownFreeLevel"/>.</summary>
+    public ItemChange Repair(RolledItem item, RepairKind kind, RolledItem? kit, CharacterSheet sheet, ulong seed)
+    {
+        var hero = SheetCodec.Read(sheet);
+        var change = Repair(item, kind, kit, seed);
+        if (!change.Ok) return change;
+        if (kind == RepairKind.Town)
+            return hero.Level >= TownFreeLevel ? change with { Cost = 0 } : change;
+        var (d, max) = ItemCodec.DurabilityOf(change.Produced[0]);
+        return change with { Produced = [ItemCodec.WithDurability(change.Produced[0], Math.Min(max, d + hero.Level), max)] };
     }
 
     /// <summary>Durability goes down by the amount, never below 0; the item is never destroyed.</summary>

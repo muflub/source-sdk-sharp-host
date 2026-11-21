@@ -62,6 +62,14 @@ public interface IGameRules
         kind == RepairKind.Town ? Repair(item) : new ItemChange([], [], 0, "unsupported");
 
     /// <summary>
+    /// A repair by a hero (contract 1.2): <paramref name="sheet"/> is the repairer's, so the rules can
+    /// size a field repair by the hero's level and stats and price a town repair by their perks (a
+    /// waived price is <c>Cost = 0</c>). The ledger calls this member; the default is the 1.1 one.
+    /// </summary>
+    ItemChange Repair(RolledItem item, RepairKind kind, RolledItem? kit, CharacterSheet sheet, ulong seed) =>
+        Repair(item, kind, kit, seed);
+
+    /// <summary>
     /// Wear on one item (contract 1.1): <c>Produced[0]</c> is the item with its durability lowered
     /// by <paramref name="amount"/>, in place. The default refuses: a 1.0 module has no durability.
     /// </summary>
@@ -73,6 +81,25 @@ public interface IGameRules
     /// player opens each container once and gets their own roll. The default is nothing.
     /// </summary>
     IReadOnlyList<RolledItem> ContainerDrops(ulong instanceSeed, uint containerSeq, int depth, CharacterSheet opener) => [];
+
+    /// <summary>
+    /// A kill's Australium pile, divided when it is picked up (contract 1.2): one share per member of
+    /// <paramref name="killerFirst"/> (the killer's party on the level, killer first when there), in
+    /// that order. The split (total / members, the remainder one apiece in order) plus each member's
+    /// found share (Scavenger: new Australium beyond the split); the host refuses a share below 0 or
+    /// above <paramref name="total"/>. The default gives every member the whole roll (the 2.7 host).
+    /// </summary>
+    IReadOnlyList<long> AustraliumShares(long total, IReadOnlyList<CharacterSheet> killerFirst) =>
+        killerFirst.Select(_ => total).ToList();
+
+    /// <summary>
+    /// One breakable (a crate, a barrel) broken by <paramref name="opener"/> (contract 1.2), numbered
+    /// apart from the containers. Pure, replayed from the instance seed; every hero in the room breaks it
+    /// for themselves and gets their own roll: Australium credited to them, items to the floor for them.
+    /// A bad outcome (a blast, a cloud, an ambush) is the game's and is the empty roll here. The
+    /// default is the empty roll.
+    /// </summary>
+    BreakableRoll BreakableDrops(ulong instanceSeed, uint breakableSeq, int depth, CharacterSheet opener) => new(0, []);
 
     /// <summary>
     /// What a new character starts with (contract 1.1), minted at creation in the same transaction
@@ -91,6 +118,16 @@ public interface IGameRules
         count < 1 || count > item.Count ? new([], [], 0, "bad_count")
         : count == item.Count ? new([0], [], 0)
         : new([], [], 0, "unsupported");
+
+    /// <summary>
+    /// Two stacks of one kind become one (contract 1.2): <paramref name="source"/>'s count goes into
+    /// <paramref name="target"/>, up to the rules' stack limit. Inputs are [source, target]. <c>Produced[0]</c>
+    /// is the target with its new count; <c>Produced[1]</c> is what is left of the source, or
+    /// <c>Consumed = [0]</c> when the source is used up. Both re-encoded, in place; nothing costs. The
+    /// host refuses a merge whose counts are not conserved. The default refuses: the host cannot
+    /// re-encode a 1.x module's items.
+    /// </summary>
+    ItemChange Merge(RolledItem source, RolledItem target) => new([], [], 0, "unsupported");
 
     /// <summary>
     /// The named equip slots (contract 1.1); an <see cref="ItemContainer.Equipped"/> item's slot is its
@@ -124,6 +161,9 @@ public enum ItemContainer { Backpack = 0, Equipped = 1, Belt = 2 }
 
 /// <summary>Town: at the town's repairer, hub only, lossless, costs Australium. Field: with a kit, anywhere.</summary>
 public enum RepairKind { Town = 0, Field = 1 }
+
+/// <summary>What one hero gets from one breakable (<see cref="IGameRules.BreakableDrops"/>).</summary>
+public sealed record BreakableRoll(long Australium, IReadOnlyList<RolledItem> Items);
 
 /// <summary>One item of a <see cref="IGameRules.StartingKit"/>: where it goes, in which slot.</summary>
 public sealed record StartingItem(RolledItem Item, ItemContainer Container, int Slot);
