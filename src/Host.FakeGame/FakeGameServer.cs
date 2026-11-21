@@ -221,7 +221,7 @@ public sealed class FakeGameServer : IAsyncDisposable
                 break;
             }
             Note($"booting_refused {boot.Refusal!.Error} {boot.Refusal.Reason}");
-            if (boot.Error is not (HostError.Unreachable or HostError.Rejected)) return;
+            if (boot.Error is not (HostError.Unreachable or HostError.Rejected or HostError.NotBooting)) return;
             await Delay(TimeSpan.FromSeconds(1));
         }
         while (!_stop.IsCancellationRequested)

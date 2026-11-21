@@ -71,7 +71,7 @@ public sealed class HostSdkOptions
 public sealed class HostSdk : IAsyncDisposable
 {
     /// <summary>Announced in Booting; the service refuses an SDK major it does not speak (§6.6).</summary>
-    public const string Version = "2.8.0";
+    public const string Version = "2.8.1";
 
     readonly SdkCore _core;
     readonly HostSession _session;
