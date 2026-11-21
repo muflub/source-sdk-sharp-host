@@ -3,6 +3,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using SourceSharp.Host.Abstractions;
 using P = SourceSharp.Host.Proto;
+using RepairKind = SourceSharp.Host.Contracts.RepairKind;
 
 namespace TF2.Descent.Service.Api;
 
@@ -125,7 +126,8 @@ public sealed class ItemApi(IHostData data, DescentLedger ledger, Travel.TravelC
 
     public override Task<P.Item> Move(P.MoveRequest request, ServerCallContext context) =>
         data.Idempotent(context, request.RequestId, P.Item.Parser, async (tx, caller) =>
-            (await ledger.Move(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemId, request.Slot, request.RequestId)).ToProto());
+            (await ledger.Move(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemId,
+                (SourceSharp.Host.Contracts.ItemContainer)(int)request.Container, request.Slot, request.RequestId)).ToProto());
 
     public override Task<P.Item> StashMove(P.StashMoveRequest request, ServerCallContext context) =>
         data.Idempotent(context, request.RequestId, P.Item.Parser, async (tx, caller) =>
@@ -167,7 +169,24 @@ public sealed class ItemApi(IHostData data, DescentLedger ledger, Travel.TravelC
 
     public override Task<P.Item> OpenCrate(P.ItemActionRequest request, ServerCallContext context) => One(request, context, "crate");
     public override Task<P.Item> Identify(P.ItemActionRequest request, ServerCallContext context) => One(request, context, "identify");
-    public override Task<P.Item> Repair(P.ItemActionRequest request, ServerCallContext context) => One(request, context, "repair");
+    public override Task<P.Item> Repair(P.ItemActionRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.Item.Parser, async (tx, caller) =>
+            (await ledger.Repair(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemId,
+                request.RepairKind == P.RepairKind.Field ? RepairKind.Field : RepairKind.Town,
+                string.IsNullOrEmpty(request.KitId) ? null : request.KitId, request.RequestId)).ToProto());
+
+    public override Task<P.ItemsResponse> OpenContainer(P.OpenContainerRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>
+            (await ledger.OpenContainer(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ContainerSeq, request.RequestId)).ToProto());
+
+    public override Task<P.Item> Consume(P.ConsumeRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.Item.Parser, async (tx, caller) =>
+            (await ledger.Consume(tx, caller, request.CharacterId, request.LeaseToken.Bytes(), request.ItemId, request.Count, request.RequestId)).ToProto());
+
+    public override Task<P.ItemsResponse> Wear(P.WearRequest request, ServerCallContext context) =>
+        data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>
+            (await ledger.Wear(tx, caller, request.CharacterId, request.LeaseToken.Bytes(),
+                request.Entries.Select(e => (e.ItemId, e.Amount)).ToList(), request.RequestId)).ToProto());
 
     public override Task<P.ItemsResponse> Salvage(P.ItemActionRequest request, ServerCallContext context) =>
         data.Idempotent(context, request.RequestId, P.ItemsResponse.Parser, async (tx, caller) =>

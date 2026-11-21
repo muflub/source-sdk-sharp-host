@@ -40,7 +40,13 @@ public interface IItems
         IReadOnlyList<string>? nearbyMembers = null, Vector3 position = default);
     Task<HostResult<HostItem>> Claim(ICharacterLease lease, string itemId);
     Task<HostResult<HostItem>> Drop(ICharacterLease lease, string itemId, Vector3 position = default);
+    /// <summary>A backpack slot change (2.6).</summary>
     Task<HostResult<HostItem>> Move(ICharacterLease lease, string itemId, int slot);
+    /// <summary>
+    /// Into a slot of a container (2.7): equip, unequip, belt. Refused onto an occupied slot
+    /// (<c>slot_taken</c>), outside the container (<c>bad_slot</c>) or by the rules (their reason, e.g. <c>potions_only</c>).
+    /// </summary>
+    Task<HostResult<HostItem>> Move(ICharacterLease lease, string itemId, HostContainer container, int slot);
     Task<HostResult<HostItem>> StashMove(ICharacterLease lease, string itemId, bool toStash, int slot = -1);
     Task<HostResult<IReadOnlyList<HostItem>>> GetBackpack(string characterId);
     Task<HostResult<IReadOnlyList<HostItem>>> GetStash(string account, bool hardcore);
@@ -52,7 +58,30 @@ public interface IItems
     Task<HostResult<HostItem>> OpenCrate(ICharacterLease lease, string itemId);
     Task<HostResult<HostItem>> Craft(ICharacterLease lease, string recipe, IReadOnlyList<string> inputs);
     Task<HostResult<HostItem>> Identify(ICharacterLease lease, string itemId);
+    /// <summary>A town repair (hub only). Same as <c>Repair(lease, itemId, HostRepairKind.Town)</c>.</summary>
     Task<HostResult<HostItem>> Repair(ICharacterLease lease, string itemId);
+    /// <summary>
+    /// SDK 2.7: a town repair (hub only, costs Australium) or a field repair with
+    /// <paramref name="kitId"/> (anywhere; the kit is consumed in the same write). The item keeps its id.
+    /// </summary>
+    Task<HostResult<HostItem>> Repair(ICharacterLease lease, string itemId, HostRepairKind kind, string? kitId = null);
+    /// <summary>
+    /// SDK 2.7: wear on up to 64 items in one write, each item at most once. Batch it: on a timer,
+    /// at a checkpoint and when an item reaches 0, not on every hit.
+    /// </summary>
+    Task<HostResult<IReadOnlyList<HostItem>>> Wear(ICharacterLease lease, IReadOnlyList<HostWear> entries);
+    /// <summary>
+    /// Uses up <paramref name="count"/> of a carried item (2.7; a potion from the belt, a tome): the item
+    /// comes back as it is after, <see cref="HostItem.Count"/> lowered, or gone (the ledger marks it
+    /// consumed). Any instance kind. The effect is the game's.
+    /// </summary>
+    Task<HostResult<HostItem>> Consume(ICharacterLease lease, string itemId, int count = 1);
+    /// <summary>
+    /// A world container (a supply crate, a locker) opened by the leased character (2.7): the host
+    /// replays the rules' <c>ContainerDrops</c> and mints them to this floor for the opener (perhaps
+    /// none). Once per container and character; a second open is refused <c>already_opened</c>.
+    /// </summary>
+    Task<HostResult<IReadOnlyList<HostItem>>> OpenContainer(ICharacterLease lease, uint containerSeq);
     Task<HostResult<IReadOnlyList<HostItem>>> Salvage(ICharacterLease lease, string itemId);
     Task<HostResult<IReadOnlyList<HostItem>>> RecordDeath(ICharacterLease lease, Vector3 position = default);
     Task<HostResult<IReadOnlyList<HostItem>>> LootCorpse(ICharacterLease lease);
@@ -167,9 +196,10 @@ internal sealed class Reserve : IReserve
         {
             request.LeaseToken = token;
             var backoff = _core.Options.RetryBackoff;
+            var auth = _core.Rpc.Auth(); // the kill's instance, for every retry (plan_sdk_2_7 §3a)
             while (true)
             {
-                var r = await _core.Rpc.Call((m, d, ct) => _core.ItemClient.RevealAsync(request, m, d, ct)).ConfigureAwait(false);
+                var r = await _core.Rpc.Call((m, d, ct) => _core.ItemClient.RevealAsync(request, m, d, ct), auth: auth).ConfigureAwait(false);
                 if (r.Error != HostError.Unreachable || _lease.Refusal() is not null || _core.Stopping.IsCancellationRequested)
                     return r.Map(v => new RevealOutcome(v.Item.ToSdk(), v.AustraliumBooked));
                 _core.Metrics.RevealRetry();
@@ -235,7 +265,14 @@ internal sealed class Items(SdkCore core) : IItems
             (r, t) => r.LeaseToken = t, core.ItemClient.DropAsync, i => i.ToSdk());
 
     public Task<HostResult<HostItem>> Move(ICharacterLease lease, string itemId, int slot) =>
-        Leased(lease, new P.MoveRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, ItemId = itemId, Slot = slot },
+        Move(lease, itemId, HostContainer.Backpack, slot);
+
+    public Task<HostResult<HostItem>> Move(ICharacterLease lease, string itemId, HostContainer container, int slot) =>
+        Leased(lease, new P.MoveRequest
+            {
+                RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, ItemId = itemId, Slot = slot,
+                Container = (P.ItemContainer)(int)container,
+            },
             (r, t) => r.LeaseToken = t, core.ItemClient.MoveAsync, i => i.ToSdk());
 
     public Task<HostResult<HostItem>> StashMove(ICharacterLease lease, string itemId, bool toStash, int slot = -1) =>
@@ -270,8 +307,30 @@ internal sealed class Items(SdkCore core) : IItems
     public Task<HostResult<HostItem>> Identify(ICharacterLease lease, string itemId) =>
         Leased(lease, Action(lease, itemId), Tok, core.ItemClient.IdentifyAsync, i => i.ToSdk());
 
-    public Task<HostResult<HostItem>> Repair(ICharacterLease lease, string itemId) =>
-        Leased(lease, Action(lease, itemId), Tok, core.ItemClient.RepairAsync, i => i.ToSdk());
+    public Task<HostResult<HostItem>> Repair(ICharacterLease lease, string itemId) => Repair(lease, itemId, HostRepairKind.Town);
+
+    public Task<HostResult<HostItem>> Repair(ICharacterLease lease, string itemId, HostRepairKind kind, string? kitId = null)
+    {
+        var request = Action(lease, itemId);
+        request.RepairKind = kind == HostRepairKind.Field ? P.RepairKind.Field : P.RepairKind.Town;
+        request.KitId = kitId ?? "";
+        return Leased(lease, request, Tok, core.ItemClient.RepairAsync, i => i.ToSdk());
+    }
+
+    public Task<HostResult<IReadOnlyList<HostItem>>> Wear(ICharacterLease lease, IReadOnlyList<HostWear> entries)
+    {
+        var request = new P.WearRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId };
+        request.Entries.AddRange(entries.Select(e => new P.WearEntry { ItemId = e.ItemId, Amount = e.Amount }));
+        return Leased(lease, request, (r, t) => r.LeaseToken = t, core.ItemClient.WearAsync, List);
+    }
+
+    public Task<HostResult<IReadOnlyList<HostItem>>> OpenContainer(ICharacterLease lease, uint containerSeq) =>
+        Leased(lease, new P.OpenContainerRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, ContainerSeq = containerSeq },
+            (r, t) => r.LeaseToken = t, core.ItemClient.OpenContainerAsync, List);
+
+    public Task<HostResult<HostItem>> Consume(ICharacterLease lease, string itemId, int count = 1) =>
+        Leased(lease, new P.ConsumeRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, ItemId = itemId, Count = count },
+            (r, t) => r.LeaseToken = t, core.ItemClient.ConsumeAsync, i => i.ToSdk());
 
     public Task<HostResult<IReadOnlyList<HostItem>>> Salvage(ICharacterLease lease, string itemId) =>
         Leased(lease, Action(lease, itemId), Tok, core.ItemClient.SalvageAsync, List);

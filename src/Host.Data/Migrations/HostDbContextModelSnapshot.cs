@@ -474,6 +474,10 @@ namespace SourceSharp.Host.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("base_type");
 
+                    b.Property<int>("Container")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("container");
+
                     b.Property<int>("Count")
                         .HasColumnType("INTEGER")
                         .HasColumnName("count");

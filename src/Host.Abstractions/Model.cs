@@ -1,3 +1,5 @@
+using ItemContainer = SourceSharp.Host.Contracts.ItemContainer;
+
 namespace SourceSharp.Host.Abstractions;
 
 // The rows of plan §4.1, as the stores hand them out: plain records, no EF types.
@@ -22,7 +24,8 @@ public sealed record ItemRecord(
     byte[] Instance, int SchemaVersion,
     string? ForCharacter, OwnerKind OwnerKind, string OwnerId, int Slot, string? InstanceId,
     int Tier, int RolledForLevel,
-    string MintedBy, DateTimeOffset MintedAt, long Version, ItemState State, string? TerminalReason, bool AdminEdited);
+    string MintedBy, DateTimeOffset MintedAt, long Version, ItemState State, string? TerminalReason, bool AdminEdited,
+    ItemContainer Container = ItemContainer.Backpack);
 
 /// <summary>What a mint needs from the rules' roll; the ledger adds id, owner and bookkeeping.</summary>
 public sealed record NewItem(

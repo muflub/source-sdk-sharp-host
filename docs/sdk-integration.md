@@ -223,6 +223,25 @@ reaped when its stream closes, never counted as a crash.
 - **Parties and trades:** `sdk.Parties` (create / invite / accept), `sdk.Trades` (offer, lock,
   confirm).
 
+### SDK 2.7.0 / Contracts 1.1.0 (plan_sdk_2_7)
+
+Every new contract member has a default body, so a rules module built on Contracts 1.0 still
+loads and behaves as before (the host supports any 1.x module up to its own minor). Implement
+the members to get the behavior:
+
+| game side (`IItems`, with the lease) | rules side (`IGameRules`, 1.1) | what the host does |
+|---|---|---|
+| `Move(lease, item, container, slot)`; `HostItem.Container` is `Backpack`, `Equipped` (slot = index into `EquipSlots`; map it to the name with your rules) or `Belt`. The 2.6 `Move(lease, item, slot)` is a backpack move | `EquipSlots`, `ContainerSlots(sheet, container)`, `PlaceRefusal(sheet, item, container, slot)` | refuses `bad_slot` (outside the container), `slot_taken` (same container), or your reason (`potions_only`, `wrong_slot`, …). Only backpack items take cells: pickups and mints land in the first free backpack cell. Death takes all three containers to the corpse; looting puts them back in backpack cells |
+| `Consume(lease, item, count = 1)`: a potion from the belt, a tome | `Consume(sheet, item, count)`: `Consumed = [0]`, or `Produced = [the stack re-encoded with its lower count]` | ends the item or lowers its count in place, audited `item.consumed`. The returned `HostItem.State` is `Consumed` when the last one is used. The effect (the heal) is yours. Without the member, a partial stack is refused `unsupported` |
+| nothing: it happens at `Characters.Create` | `StartingKit(className, sheet, seed)` → `StartingItem(item, container, slot)` | mints the kit in the creating transaction. Every kit item must replay (`Replays`), as every carried item must at a checkpoint; a kit that breaks its own containers refuses the creation, `rules_bad_kit` |
+| `Repair(lease, item, HostRepairKind.Town)` (hub only, costs Australium) or `Repair(lease, item, HostRepairKind.Field, kitId)` (anywhere, uses the kit up) | `Repair(item, kind, kit, seed)`; `Produced[0]` is the item in place, `Consumed` may name the kit (index 1) | changes the item in place (same id, same slot) and terminates the kit in the same write. The 2.6 `Repair(lease, item)` is the town repair |
+| `Wear(lease, [HostWear(item, amount), …])`: up to 64 items per call, batch it | `Wear(item, amount)`: `Produced[0]` is the item in place | one transaction; any refusal refuses the whole batch |
+| `OpenContainer(lease, containerSeq)`: a supply crate, a locker, numbered per level | `ContainerDrops(instanceSeed, containerSeq, depth, opener)`, pure | replays the roll and mints it to this floor for the opener (`ForCharacter`), once per container and character; a second open is `already_opened`, even when the first gave nothing. Pick it up with `Claim` |
+
+Also in 2.7.0: a call keeps the instance identity it started with, so a `Reveal` still
+retrying across a same-process hop lands on the level the kill happened on (or is refused),
+never the next one. Australium on the floor (one pile shared on pickup) is 2.8.0.
+
 ## 8. What the pod gives the process
 
 The SDK reads these itself; the game only needs `HostSdk.StartAsync()`.

@@ -61,8 +61,20 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
     static NewItem ToNew(RolledItem r, int rolledForLevel, string? forCharacter = null) =>
         new(r.Seed, r.BaseType, r.Rarity, r.ItemLevel, r.Count, r.Identified, r.Instance, r.SchemaVersion, r.Tier, rolledForLevel, forCharacter);
 
-    async Task<IReadOnlyList<ItemRecord>> Backpack(IReadTx tx, string characterId) =>
+    /// <summary>Everything the character carries: backpack, equipped and belt.</summary>
+    static async Task<IReadOnlyList<ItemRecord>> Carried(IReadTx tx, string characterId) =>
         await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Character, OwnerId: characterId));
+
+    /// <summary>The character's items in backpack cells (pickups, mints and trades land there; equipped and belt items take none).</summary>
+    static async Task<IReadOnlyList<ItemRecord>> Backpack(IReadTx tx, string characterId) =>
+        (await Carried(tx, characterId)).Where(i => i.Container == ItemContainer.Backpack).ToList();
+
+    /// <summary>The rules' refusal of a placement, as FailedPrecondition with the rules' reason (plan_sdk_2_7 §1).</summary>
+    static void CheckPlace(IGameRules r, CharacterRecord c, RolledItem item, ItemContainer container, int slot)
+    {
+        if (r.PlaceRefusal(Sheet(c), item, container, slot) is { } reason)
+            throw HostRefusal.Precondition(reason, $"{item.BaseType} may not go in {container} slot {slot}");
+    }
 
     /// <summary>The first free backpack slot, or no_capacity.</summary>
     async Task<int> FreeSlot(IReadTx tx, IGameRules r, CharacterRecord c)
@@ -212,6 +224,29 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         return minted.Count > 0 ? [await tx.Items.Get(minted[0].Id) ?? minted[0], .. minted.Skip(1)] : minted;
     }
 
+    public const string ContainerOpenedAction = "container.opened";
+
+    /// <summary>
+    /// plan_sdk_2_7 §3c: one world container opened by one character. The rules' roll is replayed
+    /// from the instance seed (a server cannot choose what it gives) and minted to this floor for the
+    /// opener alone. Once per (instance, container, character): the open is recorded even when the roll
+    /// is empty, so a later sheet cannot roll the same container again.
+    /// </summary>
+    public async Task<IReadOnlyList<ItemRecord>> OpenContainer(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
+        uint containerSeq, string requestId)
+    {
+        var (ch, _) = await Leased(tx, caller, characterId, token);
+        var r = RulesFor(caller);
+        var target = $"{caller.Id}:{containerSeq}:{characterId}";
+        if (await tx.Audit.Count(new AuditQuery(Action: ContainerOpenedAction, Target: target)) > 0)
+            throw HostRefusal.Precondition("already_opened", $"container {containerSeq} of {caller.Id} was opened by {characterId}");
+        var minted = new List<ItemRecord>();
+        foreach (var drop in r.ContainerDrops(caller.Seed, containerSeq, caller.Depth, Sheet(ch)))
+            minted.Add(await tx.Items.Mint(ToNew(drop, ch.Level, characterId), OwnerKind.World, caller.Id, caller.Id, -1, "container", requestId));
+        await tx.Audit.Write(ContainerOpenedAction, target, null, new { items = minted.Select(i => i.Id).ToArray() });
+        return minted;
+    }
+
     /// <summary>§5.2a level-up: tiers whose rolled level is StaleLevels or more below the new level are swept.</summary>
     public async Task<IReadOnlyList<int>> SweepStaleTiers(IWriteTx tx, string characterId, string instanceId, int newLevel)
     {
@@ -233,6 +268,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         if (item.ForCharacter is { } owner && owner != characterId)
             throw HostRefusal.Denied("wrong_owner", $"{itemId} dropped for {owner}");
         var slot = await FreeSlot(tx, r, ch);
+        CheckPlace(r, ch, Decode(r, item), ItemContainer.Backpack, slot);
         return await tx.Items.Move(new ItemMove(itemId, OwnerKind.World, OwnerKind.Character, characterId, "claim",
             Slot: slot, ClearForCharacter: true, RequestId: requestId, ExpectedInstanceId: caller.Id));
     }
@@ -245,17 +281,29 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
             InstanceId: caller.Id, ClearForCharacter: true, RequestId: requestId));
     }
 
-    /// <summary>Backpack / equip / belt: a slot change inside the character; refused onto an occupied slot.</summary>
-    public async Task<ItemRecord> Move(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token, string itemId, int slot, string requestId)
+    /// <summary>A backpack slot change (the 2.6 move).</summary>
+    public Task<ItemRecord> Move(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token, string itemId, int slot, string requestId) =>
+        Move(tx, caller, characterId, token, itemId, ItemContainer.Backpack, slot, requestId);
+
+    /// <summary>
+    /// Backpack / equip / belt (plan_sdk_2_7 §1): a slot change inside the character, refused onto an
+    /// occupied slot, outside the container, or where the rules refuse the item.
+    /// </summary>
+    public async Task<ItemRecord> Move(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token, string itemId,
+        ItemContainer container, int slot, string requestId)
     {
         var (ch, _) = await Leased(tx, caller, characterId, token);
-        await Owned(tx, itemId, characterId);
+        var item = await Owned(tx, itemId, characterId);
         var r = RulesFor(caller);
-        if (slot < 0 || slot >= r.BackpackSlots(Sheet(ch)))
-            throw new HostRefusal(RefusalCode.InvalidArgument, "bad_slot", $"slot {slot}");
-        if ((await Backpack(tx, characterId)).Any(i => i.Slot == slot && i.Id != itemId))
-            throw HostRefusal.Precondition("slot_taken", $"slot {slot} of {characterId}");
-        return await tx.Items.Move(new ItemMove(itemId, OwnerKind.Character, OwnerKind.Character, characterId, "move", Slot: slot, RequestId: requestId));
+        if (!Enum.IsDefined(container))
+            throw new HostRefusal(RefusalCode.InvalidArgument, "bad_container", $"container {(int)container}");
+        if (slot < 0 || slot >= r.ContainerSlots(Sheet(ch), container))
+            throw new HostRefusal(RefusalCode.InvalidArgument, "bad_slot", $"{container} slot {slot}");
+        if ((await Carried(tx, characterId)).Any(i => i.Container == container && i.Slot == slot && i.Id != itemId))
+            throw HostRefusal.Precondition("slot_taken", $"{container} slot {slot} of {characterId}");
+        CheckPlace(r, ch, Decode(r, item), container, slot);
+        return await tx.Items.Move(new ItemMove(itemId, OwnerKind.Character, OwnerKind.Character, characterId, "move",
+            Slot: slot, RequestId: requestId, Container: container));
     }
 
     /// <summary>Backpack ↔ shared stash (hub only; capacity from the living characters of the account, D4).</summary>
@@ -348,7 +396,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
 
     // ------------------------------------------------------------------ item operations (D22–D24)
 
-    /// <summary>Crates, crafts and salvage consume inputs and mint outputs; identify and repair change the item in place.</summary>
+    /// <summary>Crates, crafts and salvage consume inputs and mint outputs; identify changes the item in place (repair is <see cref="Repair"/>).</summary>
     public async Task<IReadOnlyList<ItemRecord>> Transform(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
         string operation, IReadOnlyList<string> inputIds, string? recipe, string requestId)
     {
@@ -366,15 +414,14 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
             "crate" => r.OpenCrate(rolled[0], ctx, NewSeed()),
             "craft" => r.Craft(recipe ?? "", rolled, ctx, NewSeed()),
             "identify" => r.Identify(rolled[0], NewSeed()),
-            "repair" => r.Repair(rolled[0]),
             "salvage" => r.Salvage(rolled[0], ctx, NewSeed()),
             _ => throw new HostRefusal(RefusalCode.InvalidArgument, "bad_operation", operation),
         };
         if (!change.Ok) throw HostRefusal.Precondition(change.Refusal!, $"{operation} refused by the rules");
         if (change.Cost > 0) await tx.Characters.AddAustralium(characterId, -change.Cost, operation, inputs[0].Id);
 
-        // identify / repair: the item itself changes, it is not a mint (§5.2).
-        if (operation is "identify" or "repair")
+        // identify: the item itself changes, it is not a mint (§5.2).
+        if (operation is "identify")
         {
             var p = change.Produced[0];
             return [await tx.Items.Mutate(inputs[0].Id, inputs[0].Version, p.Instance, p.SchemaVersion, p.Identified, false, operation, requestId)];
@@ -385,9 +432,104 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         foreach (var p in change.Produced)
         {
             var slot = await FreeSlot(tx, r, ch);
+            CheckPlace(r, ch, p, ItemContainer.Backpack, slot);
             result.Add(await tx.Items.Mint(ToNew(p, ch.Level), OwnerKind.Character, characterId, null, slot, operation, requestId));
         }
         return result;
+    }
+
+    /// <summary>
+    /// plan_sdk_2_7 §2: a town repair (hub only) or a field repair with a kit (anywhere). The
+    /// repaired item changes in place (same id, same slot); a field repair's kit is consumed in
+    /// the same transaction. The rules may consume only the kit.
+    /// </summary>
+    public async Task<ItemRecord> Repair(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
+        string itemId, RepairKind kind, string? kitId, string requestId)
+    {
+        await Leased(tx, caller, characterId, token);
+        if (kind == RepairKind.Town) RequireHub(caller);
+        var r = RulesFor(caller);
+        var item = await Owned(tx, itemId, characterId);
+        ItemRecord? kit = null;
+        if (kind == RepairKind.Field)
+        {
+            if (string.IsNullOrEmpty(kitId) || kitId == itemId)
+                throw new HostRefusal(RefusalCode.InvalidArgument, "bad_kit", "a field repair names a kit other than the item");
+            kit = await Owned(tx, kitId, characterId);
+        }
+        else if (!string.IsNullOrEmpty(kitId))
+            throw new HostRefusal(RefusalCode.InvalidArgument, "bad_kit", "a town repair takes no kit");
+
+        var change = r.Repair(Decode(r, item), kind, kit is null ? null : Decode(r, kit), NewSeed());
+        if (!change.Ok) throw HostRefusal.Precondition(change.Refusal!, "repair refused by the rules");
+        // Index 0 is the item itself, changed in place whatever the rules say (1.0's Repair returns
+        // Consumed = [0]); index 1, the kit, is the only input a repair may terminate.
+        if (change.Produced.Count != 1 || change.Consumed.Any(i => i is not (0 or 1)) || (kit is null && change.Consumed.Contains(1)))
+            throw HostRefusal.Precondition("rules_bad_repair", "a repair produces the item and may consume only the kit");
+        if (change.Cost > 0) await tx.Characters.AddAustralium(characterId, -change.Cost, "repair", item.Id);
+        if (kit is not null && change.Consumed.Contains(1))
+            await tx.Items.Terminate(kit.Id, OwnerKind.Character, ItemState.Consumed, "repair_kit", requestId);
+        var p = change.Produced[0];
+        return await tx.Items.Mutate(item.Id, item.Version, p.Instance, p.SchemaVersion, p.Identified, false,
+            kind == RepairKind.Town ? "repair" : "field_repair", requestId);
+    }
+
+    public const int MaxWearEntries = 64;
+
+    /// <summary>
+    /// plan_sdk_2_7 §2: batched wear, one rules call and one in-place write per item, all in one
+    /// transaction. Any refusal refuses the batch.
+    /// </summary>
+    public async Task<IReadOnlyList<ItemRecord>> Wear(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
+        IReadOnlyList<(string ItemId, int Amount)> entries, string requestId)
+    {
+        await Leased(tx, caller, characterId, token);
+        if (entries.Count == 0 || entries.Count > MaxWearEntries)
+            throw new HostRefusal(RefusalCode.InvalidArgument, "bad_entries", $"1..{MaxWearEntries} entries, got {entries.Count}");
+        if (entries.Select(e => e.ItemId).Distinct().Count() != entries.Count)
+            throw new HostRefusal(RefusalCode.InvalidArgument, "bad_entries", "an item appears twice");
+        var r = RulesFor(caller);
+        var worn = new List<ItemRecord>();
+        foreach (var (itemId, amount) in entries)
+        {
+            if (amount <= 0) throw new HostRefusal(RefusalCode.InvalidArgument, "bad_amount", $"{itemId}: {amount}");
+            var item = await Owned(tx, itemId, characterId);
+            var change = r.Wear(Decode(r, item), amount);
+            if (!change.Ok) throw HostRefusal.Precondition(change.Refusal!, $"wear on {itemId} refused by the rules");
+            if (change.Produced.Count != 1 || change.Consumed.Count > 0 || change.Cost != 0)
+                throw HostRefusal.Precondition("rules_bad_wear", "wear produces the item in place, consumes nothing, costs nothing");
+            var p = change.Produced[0];
+            worn.Add(await tx.Items.Mutate(item.Id, item.Version, p.Instance, p.SchemaVersion, p.Identified, false, "wear", requestId));
+        }
+        return worn;
+    }
+
+    // ------------------------------------------------------------------ consume (plan_sdk_2_7 §1)
+
+    public const string ConsumeAction = "item.consumed";
+
+    /// <summary>
+    /// Uses up <paramref name="count"/> of a carried item, on any instance kind: the item is terminated
+    /// Consumed, or a stack's count is lowered in place. Returns the item as it is after (its state says
+    /// which). The effect (a heal, a skill) is the game's.
+    /// </summary>
+    public async Task<ItemRecord> Consume(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token,
+        string itemId, int count, string requestId)
+    {
+        var (ch, _) = await Leased(tx, caller, characterId, token);
+        if (count < 1) throw new HostRefusal(RefusalCode.InvalidArgument, "bad_count", $"count {count}");
+        var item = await Owned(tx, itemId, characterId);
+        var r = RulesFor(caller);
+        var change = r.Consume(Sheet(ch), Decode(r, item), count);
+        if (!change.Ok) throw HostRefusal.Precondition(change.Refusal!, $"consume of {itemId} refused by the rules");
+        var whole = change.Consumed is [0] && change.Produced.Count == 0;
+        var partial = change.Consumed.Count == 0 && change.Produced is [{ Count: var left }] && left >= 1 && left == item.Count - count;
+        if (change.Cost != 0 || !(whole || partial))
+            throw HostRefusal.Precondition("rules_bad_consume", "consume ends the item or lowers its count by exactly the amount, costing nothing");
+        await tx.Audit.Write(ConsumeAction, itemId, null, new { character = characterId, count, instance = caller.Id });
+        if (whole) return await tx.Items.Terminate(itemId, OwnerKind.Character, ItemState.Consumed, "consume", requestId);
+        var p = change.Produced[0];
+        return await tx.Items.SetCount(itemId, item.Version, p.Count, p.Instance, p.SchemaVersion, "consume", requestId);
     }
 
     // ------------------------------------------------------------------ death, corpse, Lost & Found (D6, D7)
@@ -398,10 +540,11 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
     public async Task<IReadOnlyList<ItemRecord>> RecordDeath(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token, string requestId)
     {
         var (ch, _) = await Leased(tx, caller, characterId, token);
-        var carried = await Backpack(tx, characterId);
+        var carried = await Carried(tx, characterId);
         var moved = new List<ItemRecord>();
         foreach (var i in carried)
-            moved.Add(await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Character, OwnerKind.Corpse, characterId, "death", Slot: i.Slot, InstanceId: caller.Id, RequestId: requestId)));
+            moved.Add(await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Character, OwnerKind.Corpse, characterId, "death",
+                Slot: i.Slot, InstanceId: caller.Id, RequestId: requestId, Container: i.Container)));
         if (ch.Australium > 0)
             await tx.Characters.AddAustralium(characterId, -ch.Australium, "corpse", $"corpse:{caller.Id}");
         if (ch.Hardcore)
@@ -532,7 +675,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
     {
         var items = await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Corpse, OwnerId: characterId, InstanceId: from, Take: 10_000));
         foreach (var i in items)
-            await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Corpse, OwnerKind.Corpse, characterId, reason, InstanceId: to, Slot: i.Slot));
+            await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Corpse, OwnerKind.Corpse, characterId, reason, InstanceId: to, Slot: i.Slot, Container: i.Container));
         var held = -(await tx.Characters.AustraliumLedger(characterId)).Where(e => e.Ref == $"corpse:{from}").Sum(e => e.Delta);
         if (held > 0)
         {
@@ -550,7 +693,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         foreach (var i in await tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.TradeEscrow, OwnerId: t.Id, Take: 1000)))
         {
             var back = t.OfferA.Contains(i.Id) ? t.A : t.B;
-            await tx.Items.Move(new ItemMove(i.Id, OwnerKind.TradeEscrow, OwnerKind.Character, back, "trade_return", Slot: i.Slot));
+            await tx.Items.Move(new ItemMove(i.Id, OwnerKind.TradeEscrow, OwnerKind.Character, back, "trade_return", Slot: i.Slot, Container: i.Container));
             n++;
         }
         return n;
@@ -597,7 +740,7 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         foreach (var id in isA ? t.OfferA : t.OfferB)
         {
             var i = await Owned(tx, id, characterId);
-            await tx.Items.Move(new ItemMove(id, OwnerKind.Character, OwnerKind.TradeEscrow, t.Id, "trade_lock", Slot: i.Slot, RequestId: requestId));
+            await tx.Items.Move(new ItemMove(id, OwnerKind.Character, OwnerKind.TradeEscrow, t.Id, "trade_lock", Slot: i.Slot, RequestId: requestId, Container: i.Container));
         }
         t = isA ? t with { LockedA = true } : t with { LockedB = true };
         return await tx.Trades.Save(t.LockedA && t.LockedB ? t with { State = TradeStatus.Locked } : t);

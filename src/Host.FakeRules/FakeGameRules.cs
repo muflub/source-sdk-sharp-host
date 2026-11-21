@@ -34,7 +34,8 @@ public sealed class FakeGameRules : IGameRules
     public RolledItem RollItem(ItemRollContext ctx, ulong seed)
     {
         var h = Hash("item", seed, ctx.CharacterClass, ctx.CharacterLevel, ctx.Depth, ctx.ItemLevel, ctx.Tier, ctx.LootTable);
-        var baseType = Bases[(int)(h % (ulong)Bases.Length)];
+        // A kit or container item names its base type in the source ("base:health_small"), so it replays.
+        var baseType = ctx.Source.StartsWith(NamedBase) ? ctx.Source[NamedBase.Length..] : Bases[(int)(h % (ulong)Bases.Length)];
         var identified = ctx.Tier < 2; // Strange and above drop unidentified (D22)
         var item = new RolledItem(seed, baseType, ctx.Tier, ctx.ItemLevel, 1, identified, [], ItemCodec.Schema, ctx.Tier, ctx);
         return item with { Instance = ItemCodec.Encode(item) };
@@ -62,6 +63,52 @@ public sealed class FakeGameRules : IGameRules
 
     public int BackpackSlots(CharacterSheet sheet) => Backpack;
     public int StashSlots(IReadOnlyList<CharacterSheet> living) => Stash;
+
+    public const string NamedBase = "base:";
+
+    /// <summary>Every class: two small health potions and a small mana potion on the belt.</summary>
+    public IReadOnlyList<StartingItem> StartingKit(string className, CharacterSheet sheet, ulong seed)
+    {
+        RolledItem Roll(string baseType, int n) =>
+            RollItem(new ItemRollContext(className, 1, 0, 1, 0, "kit", NamedBase + baseType), Hash("kit", seed, n));
+        return
+        [
+            new(Roll("health_small", 0), ItemContainer.Belt, 0),
+            new(Roll("health_small", 1), ItemContainer.Belt, 1),
+            new(Roll("mana_small", 2), ItemContainer.Belt, 2),
+        ];
+    }
+
+    /// <summary>One container in four holds a small health potion for its opener.</summary>
+    public IReadOnlyList<RolledItem> ContainerDrops(ulong instanceSeed, uint containerSeq, int depth, CharacterSheet opener)
+    {
+        var who = SheetCodec.Read(opener);
+        if (Hash("container", instanceSeed, containerSeq, depth) % 4 != 0) return [];
+        var ctx = new ItemRollContext(who.ClassName, who.Level, depth, Math.Max(1, depth), 0, "container", NamedBase + "health_small");
+        return [RollItem(ctx, Hash("container-item", instanceSeed, containerSeq, who.Name))];
+    }
+
+    public static readonly string[] Slots = ["primary", "secondary", "melee", "hat", "body", "feet", "trinket1", "trinket2", "amulet"];
+    public const int BeltSlots = 4;
+    public IReadOnlyList<string> EquipSlots => Slots;
+
+    public int ContainerSlots(CharacterSheet sheet, ItemContainer container) => container switch
+    {
+        ItemContainer.Backpack => Backpack,
+        ItemContainer.Equipped => Slots.Length,
+        ItemContainer.Belt => BeltSlots,
+        _ => 0,
+    };
+
+    /// <summary>Potions (base types health_* and mana_*) only on the belt; potions and kits never equipped.</summary>
+    public static bool IsPotion(RolledItem item) => item.BaseType.StartsWith("health_") || item.BaseType.StartsWith("mana_");
+
+    public string? PlaceRefusal(CharacterSheet sheet, RolledItem item, ItemContainer container, int slot) => container switch
+    {
+        ItemContainer.Belt when !IsPotion(item) => "potions_only",
+        ItemContainer.Equipped when IsPotion(item) || item.BaseType == RepairKit => "wrong_slot",
+        _ => null,
+    };
 
     public CharacterSheet NewCharacter(string className, string name, bool hardcore) =>
         SheetCodec.Write(new Sheet(className, name, 1, 0, 0, hardcore, false));
@@ -119,7 +166,43 @@ public sealed class FakeGameRules : IGameRules
     public ItemChange Identify(RolledItem item, ulong seed) =>
         item.Identified ? new([], [], 0, "already_identified") : new([0], [Re(item with { Identified = true })], 2);
 
-    public ItemChange Repair(RolledItem item) => new([0], [item], 1);
+    /// <summary>A stack loses <paramref name="count"/>; at 0 the item is gone.</summary>
+    public ItemChange Consume(CharacterSheet sheet, RolledItem item, int count) =>
+        count < 1 || count > item.Count ? new([], [], 0, "bad_count")
+        : count == item.Count ? new([0], [], 0)
+        : new([], [Re(item with { Count = item.Count - count })], 0);
+
+    /// <summary>A town repair: back to full durability, maximum unchanged, cost 1.</summary>
+    public ItemChange Repair(RolledItem item)
+    {
+        var (_, max) = ItemCodec.DurabilityOf(item);
+        return new([0], [ItemCodec.WithDurability(item, max, max)], 1);
+    }
+
+    public const string RepairKit = "repair_kit";
+
+    /// <summary>
+    /// The game's field-repair shape (plan_sdk_2_7 §2): restore level + (seed % level), lower the
+    /// maximum by max(max / (level + 9), 1), consume the kit. Free.
+    /// </summary>
+    public ItemChange Repair(RolledItem item, RepairKind kind, RolledItem? kit, ulong seed)
+    {
+        if (kind == RepairKind.Town) return Repair(item);
+        if (kit is null || kit.BaseType != RepairKit) return new([], [], 0, "not_a_kit");
+        var (d, max) = ItemCodec.DurabilityOf(item);
+        var level = Math.Max(1, item.ItemLevel);
+        var newMax = Math.Max(0, max - Math.Max(max / (level + 9), 1));
+        var restored = Math.Min(newMax, d + level + (int)(seed % (ulong)level));
+        return new([1], [ItemCodec.WithDurability(item, restored, newMax)], 0);
+    }
+
+    /// <summary>Durability goes down by the amount, never below 0; the item is never destroyed.</summary>
+    public ItemChange Wear(RolledItem item, int amount)
+    {
+        if (amount <= 0) return new([], [], 0, "bad_amount");
+        var (d, max) = ItemCodec.DurabilityOf(item);
+        return new([], [ItemCodec.WithDurability(item, Math.Max(0, d - amount), max)], 0);
+    }
 
     public ItemChange Salvage(RolledItem item, ItemRollContext ctx, ulong seed) =>
         new([0], [Re(RollItem(ctx with { Tier = 0, Source = "salvage" }, seed) with { BaseType = "metal", Count = item.Rarity + 1 })], 0);
@@ -149,10 +232,30 @@ public sealed class FakeGameRules : IGameRules
         public const int Schema = 1;
         public int SchemaVersion => Schema;
 
-        sealed record Wire(ulong Seed, string BaseType, int Rarity, int ItemLevel, int Count, bool Identified, int Tier, ItemRollContext Context);
+        public const int FullDurability = 100;
 
-        public static byte[] Encode(RolledItem i) =>
-            JsonSerializer.SerializeToUtf8Bytes(new Wire(i.Seed, i.BaseType, i.Rarity, i.ItemLevel, i.Count, i.Identified, i.Tier, i.Context));
+        sealed record Wire(ulong Seed, string BaseType, int Rarity, int ItemLevel, int Count, bool Identified, int Tier, ItemRollContext Context,
+            int Durability = FullDurability, int MaxDurability = FullDurability);
+
+        /// <summary>Encodes the item; durability is carried over from its current bytes (full for a new roll).</summary>
+        public static byte[] Encode(RolledItem i)
+        {
+            var (d, max) = DurabilityOf(i);
+            return Write(i, d, max);
+        }
+
+        static byte[] Write(RolledItem i, int durability, int max) =>
+            JsonSerializer.SerializeToUtf8Bytes(new Wire(i.Seed, i.BaseType, i.Rarity, i.ItemLevel, i.Count, i.Identified, i.Tier, i.Context, durability, max));
+
+        /// <summary>(durability, maximum) from the item's bytes; full for an item without them.</summary>
+        public static (int Durability, int Max) DurabilityOf(RolledItem i)
+        {
+            if (i.Instance.Length == 0) return (FullDurability, FullDurability);
+            var w = JsonSerializer.Deserialize<Wire>(i.Instance) ?? throw new InvalidDataException("empty item");
+            return (w.Durability, w.MaxDurability);
+        }
+
+        public static RolledItem WithDurability(RolledItem i, int durability, int max) => i with { Instance = Write(i, durability, max) };
 
         public RolledItem Decode(byte[] instance, int schemaVersion)
         {

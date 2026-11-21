@@ -68,6 +68,15 @@ message Item {
   string for_character = 13;  // empty = anyone in the instance
   string instance_id = 14;
   int32 tier = 15;            // reserve tier, when minted into a reserve
+  ItemContainer container = 16; // a character's item: backpack cell, equip slot (index into the rules' EquipSlots) or belt slot
+  ItemState state = 17;         // SDK 2.7: LIVE, or how it ended (a Consume that used the last of it gives CONSUMED)
+}
+
+// SDK 2.7 / contract 1.1. Zero is the backpack, so an unset field is the 2.6 behavior.
+enum ItemContainer {
+  ITEM_CONTAINER_BACKPACK = 0;
+  ITEM_CONTAINER_EQUIPPED = 1;
+  ITEM_CONTAINER_BELT = 2;
 }
 
 message Character {

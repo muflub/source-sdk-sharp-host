@@ -1,3 +1,5 @@
+using ItemContainer = SourceSharp.Host.Contracts.ItemContainer;
+
 namespace SourceSharp.Host.Abstractions;
 
 /// <summary>
@@ -129,7 +131,8 @@ public interface ILeaseStore
 public sealed record ItemMove(
     string ItemId, OwnerKind From, OwnerKind To, string ToOwnerId, string EventKind,
     long? ExpectedVersion = null, string? InstanceId = null, int Slot = -1,
-    bool ClearForCharacter = false, string? RequestId = null, string? ExpectedInstanceId = null);
+    bool ClearForCharacter = false, string? RequestId = null, string? ExpectedInstanceId = null,
+    ItemContainer Container = ItemContainer.Backpack);
 
 public sealed record ItemQuery(
     OwnerKind? OwnerKind = null, string? OwnerId = null, string? InstanceId = null, ItemState? State = ItemState.Live,
@@ -144,12 +147,18 @@ public sealed record ItemQuery(
 /// </summary>
 public interface IItemLedger
 {
-    Task<ItemRecord> Mint(NewItem item, OwnerKind owner, string ownerId, string? instanceId, int slot, string mintedBy, string? requestId);
+    Task<ItemRecord> Mint(NewItem item, OwnerKind owner, string ownerId, string? instanceId, int slot, string mintedBy, string? requestId,
+        ItemContainer container = ItemContainer.Backpack);
     Task<ItemRecord?> Get(string id);
     Task<ItemRecord> Move(ItemMove move);
     Task<ItemRecord> Terminate(string itemId, OwnerKind from, ItemState terminal, string reason, string? requestId);
     /// <summary>Changes an item's own data (identify, repair, admin edit): not a move.</summary>
     Task<ItemRecord> Mutate(string itemId, long expectedVersion, byte[] instance, int schemaVersion, bool identified, bool adminEdited, string eventKind, string? requestId);
+    /// <summary>
+    /// A stack's new count and the rules' re-encoding of it (a partial consume): not a move. Versioned like
+    /// <see cref="Mutate"/>; a count below 1 is refused (a stack that reaches 0 is terminated instead).
+    /// </summary>
+    Task<ItemRecord> SetCount(string itemId, long expectedVersion, int count, byte[] instance, int schemaVersion, string eventKind, string? requestId);
     Task<IReadOnlyList<ItemRecord>> Query(ItemQuery query);
     Task<int> Count(ItemQuery query);
     Task<IReadOnlyList<ItemEvent>> Events(string itemId);

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SourceSharp.Host.Abstractions;
+using ItemContainer = SourceSharp.Host.Contracts.ItemContainer;
 
 namespace SourceSharp.Host.Data;
 
@@ -12,7 +13,8 @@ internal sealed class ItemLedger(Ctx c) : IItemLedger
 {
     static string Owner(OwnerKind kind, string id) => $"{kind}:{id}";
 
-    public async Task<ItemRecord> Mint(NewItem item, OwnerKind owner, string ownerId, string? instanceId, int slot, string mintedBy, string? requestId)
+    public async Task<ItemRecord> Mint(NewItem item, OwnerKind owner, string ownerId, string? instanceId, int slot, string mintedBy, string? requestId,
+        ItemContainer container = ItemContainer.Backpack)
     {
         c.Writable();
         var now = c.Now;
@@ -20,7 +22,7 @@ internal sealed class ItemLedger(Ctx c) : IItemLedger
         {
             Id = c.NewId(), Seed = item.Seed, BaseType = item.BaseType, Rarity = item.Rarity, ItemLevel = item.ItemLevel,
             Count = item.Count, Identified = item.Identified, Instance = item.Instance, SchemaVersion = item.SchemaVersion,
-            ForCharacter = item.ForCharacter, OwnerKind = owner, OwnerId = ownerId, Slot = slot, InstanceId = instanceId,
+            ForCharacter = item.ForCharacter, OwnerKind = owner, OwnerId = ownerId, Slot = slot, Container = container, InstanceId = instanceId,
             Tier = item.Tier, RolledForLevel = item.RolledForLevel, MintedBy = mintedBy, MintedAt = now, Version = 1, State = ItemState.Live,
         };
         c.Db.Items.Add(row);
@@ -63,6 +65,7 @@ internal sealed class ItemLedger(Ctx c) : IItemLedger
                 .SetProperty(i => i.OwnerKind, m.To)
                 .SetProperty(i => i.OwnerId, m.ToOwnerId)
                 .SetProperty(i => i.Slot, m.Slot)
+                .SetProperty(i => i.Container, m.Container)
                 .SetProperty(i => i.InstanceId, m.InstanceId)
                 .SetProperty(i => i.ForCharacter, forCharacter)
                 .SetProperty(i => i.Version, version + 1));
@@ -112,6 +115,27 @@ internal sealed class ItemLedger(Ctx c) : IItemLedger
         row.SchemaVersion = schemaVersion;
         row.Identified = identified;
         row.AdminEdited |= adminEdited;
+        row.Version++;
+        c.Db.ItemEvents.Add(new ItemEventRow
+        {
+            ItemId = itemId, At = c.Now, Kind = eventKind, FromOwner = Owner(row.OwnerKind, row.OwnerId),
+            ToOwner = Owner(row.OwnerKind, row.OwnerId), InstanceId = row.InstanceId, RequestId = requestId, Actor = c.Actor,
+        });
+        await c.Save();
+        return (await Get(itemId))!;
+    }
+
+    public async Task<ItemRecord> SetCount(string itemId, long expectedVersion, int count, byte[] instance, int schemaVersion, string eventKind, string? requestId)
+    {
+        c.Writable();
+        if (count < 1) throw new ArgumentOutOfRangeException(nameof(count), count, "a stack that reaches 0 is terminated, not counted");
+        var row = await c.Db.Items.FirstOrDefaultAsync(i => i.Id == itemId) ?? throw HostRefusal.NotFound("no_item", itemId);
+        if (row.State != ItemState.Live) throw HostRefusal.Precondition("wrong_owner", $"item {itemId} is {row.State}");
+        if (row.Version != expectedVersion)
+            throw HostRefusal.Precondition("version_conflict", $"item {itemId} is at version {row.Version}, not {expectedVersion}");
+        row.Count = count;
+        row.Instance = instance;
+        row.SchemaVersion = schemaVersion;
         row.Version++;
         c.Db.ItemEvents.Add(new ItemEventRow
         {

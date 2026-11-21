@@ -13,12 +13,28 @@ public sealed record OpaquePayload(byte[] Data, uint SchemaVersion)
     public static OpaquePayload Empty { get; } = new([], 0);
 }
 
+/// <summary>SDK 2.7. Town: the town's repairer, hub only, costs Australium. Field: with a kit, anywhere.</summary>
+public enum HostRepairKind { Town, Field }
+
+/// <summary>SDK 2.7: wear on one item, for <see cref="IItems.Wear"/>.</summary>
+public sealed record HostWear(string ItemId, int Amount);
+
 public enum HostOwnerKind { Unspecified, Reserve, World, Corpse, Vendor, Character, Stash, TradeEscrow, LostAndFound, Admin }
 
 /// <summary>An item as the ledger holds it. Only the host mints items; the SDK only ever receives them.</summary>
 public sealed record HostItem(
     string Id, ulong Seed, string BaseType, int Rarity, int ItemLevel, int Count, bool Identified, OpaquePayload Instance,
-    HostOwnerKind Owner, string OwnerId, int Slot, long Version, string ForCharacter, string InstanceId, int Tier);
+    HostOwnerKind Owner, string OwnerId, int Slot, long Version, string ForCharacter, string InstanceId, int Tier,
+    HostContainer Container = HostContainer.Backpack, HostItemState State = HostItemState.Live);
+
+/// <summary>Live, or how the item ended (2.7: a <c>Consume</c> that used the last of it gives <see cref="Consumed"/>).</summary>
+public enum HostItemState { Unspecified, Live, Swept, Destroyed, Consumed }
+
+/// <summary>
+/// Where a character's item sits (2.7): backpack cells, equip slots (<see cref="HostItem.Slot"/> indexes
+/// the rules' <c>EquipSlots</c>; the game maps it to the name) or the belt.
+/// </summary>
+public enum HostContainer { Backpack, Equipped, Belt }
 
 public sealed record HostCharacter(
     string Id, string Account, string ClassName, string Name, bool Hardcore, bool Fallen, int Level, long Xp,
@@ -84,7 +100,8 @@ internal static class Map
     public static P.Vec3 ToProto(this Vector3 v) => new() { X = v.X, Y = v.Y, Z = v.Z };
 
     public static HostItem ToSdk(this P.Item i) => new(i.Id, i.Seed, i.BaseType, i.Rarity, i.Ilvl, i.Count, i.Identified, i.Instance.ToSdk(),
-        (HostOwnerKind)(int)i.OwnerKind, i.OwnerId, i.Slot, i.Version, i.ForCharacter, i.InstanceId, i.Tier);
+        (HostOwnerKind)(int)i.OwnerKind, i.OwnerId, i.Slot, i.Version, i.ForCharacter, i.InstanceId, i.Tier, (HostContainer)(int)i.Container,
+        (HostItemState)(int)i.State);
 
     public static IReadOnlyList<HostItem> ToSdk(this P.ItemsResponse r) => r.Items.Select(ToSdk).ToList();
 

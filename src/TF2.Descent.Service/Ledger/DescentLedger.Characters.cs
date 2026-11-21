@@ -13,7 +13,18 @@ public sealed partial class DescentLedger
         var sheet = r.NewCharacter(className, name, hardcore);
         var s = r.Sheets.Summarize(sheet);
         var ch = await tx.Characters.Create(account, s.ClassName, s.Name, hardcore, sheet.Data, sheet.SchemaVersion, s.Level, s.Xp);
-        await tx.Audit.Write("character.create", ch.Id, null, new { account, className, name, hardcore, instance = caller.Id });
+        var kit = r.StartingKit(className, sheet, NewSeed());
+        var taken = new HashSet<(ItemContainer, int)>();
+        foreach (var k in kit)
+        {
+            // The kit is the rules' own: one that does not fit its own containers is a rules bug, refused loudly.
+            if (k.Slot < 0 || k.Slot >= r.ContainerSlots(sheet, k.Container) || !taken.Add((k.Container, k.Slot)))
+                throw HostRefusal.Precondition("rules_bad_kit", $"{k.Item.BaseType} in {k.Container} slot {k.Slot}");
+            if (r.PlaceRefusal(sheet, k.Item, k.Container, k.Slot) is { } reason)
+                throw HostRefusal.Precondition("rules_bad_kit", $"{k.Item.BaseType} in {k.Container} slot {k.Slot}: {reason}");
+            await tx.Items.Mint(ToNew(k.Item, ch.Level), OwnerKind.Character, ch.Id, null, k.Slot, "starting_kit", null, k.Container);
+        }
+        await tx.Audit.Write("character.create", ch.Id, null, new { account, className, name, hardcore, instance = caller.Id, kit = kit.Count });
         return ch;
     }
 
@@ -67,7 +78,7 @@ public sealed partial class DescentLedger
         var verdict = r.ValidateCheckpoint(before, after, new CheckpointEvidence(evidence, evidenceVersion));
         if (!verdict.Ok) throw HostRefusal.Precondition(verdict.FailedRule ?? "invalid_checkpoint", $"checkpoint of {characterId} refused by the rules");
 
-        foreach (var item in await Backpack(tx, characterId))
+        foreach (var item in await Carried(tx, characterId))
         {
             if (item.AdminEdited) continue;
             RolledItem rolled;
