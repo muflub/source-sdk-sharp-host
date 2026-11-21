@@ -82,6 +82,36 @@ public interface IItems
     /// none). Once per container and character; a second open is refused <c>already_opened</c>.
     /// </summary>
     Task<HostResult<IReadOnlyList<HostItem>>> OpenContainer(ICharacterLease lease, uint containerSeq);
+    /// <summary>
+    /// Two carried items exchange their container and slot (2.8): an equip swap, a belt ↔ backpack
+    /// swap, an equip through a full backpack. Both destinations are asked of the rules; a refusal
+    /// refuses both. Returns [a, b] as they are after.
+    /// </summary>
+    Task<HostResult<IReadOnlyList<HostItem>>> Swap(ICharacterLease lease, string itemA, string itemB);
+    /// <summary>
+    /// Two stacks of one kind become one (2.8; two partial potion stacks on the belt): returns [into,
+    /// from] as they are after; <c>from</c> is <see cref="HostItemState.Consumed"/> when it was used up,
+    /// else holds what did not fit. The rules decide the kind and the limit; the host keeps the count.
+    /// </summary>
+    Task<HostResult<IReadOnlyList<HostItem>>> Merge(ICharacterLease lease, string fromItemId, string intoItemId);
+    /// <summary>
+    /// A breakable broken by the leased hero (2.8): the host replays the rules' <c>BreakableDrops</c>,
+    /// credits its Australium to the hero and puts its items on this floor for them. Call it once per
+    /// hero in the room, each with their own lease. Once per breakable and hero; a second break is
+    /// <c>already_broken</c>.
+    /// </summary>
+    Task<HostResult<HostBreak>> Break(ICharacterLease lease, uint breakableSeq);
+    /// <summary>
+    /// A kill's Australium as one pile on this floor (2.8): the host replays the kill's roll. Call it
+    /// for every kill whose roll has Australium, item or not (a 2.8 <c>Reveal</c> credits none). Once per
+    /// kill; a kill with none is refused <c>no_australium</c>.
+    /// </summary>
+    Task<HostResult<HostItem>> KillAustralium(ICharacterLease killer, uint killSeq, string robotTemplate, int partySize, Vector3 position = default);
+    /// <summary>
+    /// A pile picked up by the leased hero (the killer or one of their party): every party member on
+    /// this level is credited their share (the rules' <c>AustraliumShares</c>), and the pile ends.
+    /// </summary>
+    Task<HostResult<IReadOnlyList<HostAustraliumCredit>>> ClaimAustralium(ICharacterLease lease, string pileId);
     Task<HostResult<IReadOnlyList<HostItem>>> Salvage(ICharacterLease lease, string itemId);
     Task<HostResult<IReadOnlyList<HostItem>>> RecordDeath(ICharacterLease lease, Vector3 position = default);
     Task<HostResult<IReadOnlyList<HostItem>>> LootCorpse(ICharacterLease lease);
@@ -191,6 +221,7 @@ internal sealed class Reserve : IReserve
         {
             RequestId = Rpc.NewRequestId(), CharacterId = _lease.CharacterId, ItemId = item.Id, KillSeq = killSeq, RobotTemplate = robotTemplate,
             NearbyMembers = { nearbyMembers ?? [] }, Position = position.ToProto(),
+            AustraliumPile = true, // 2.8: the kill's Australium is IItems.KillAustralium's pile, not credited here
         };
         return _lease.Write(async token =>
         {
@@ -323,6 +354,30 @@ internal sealed class Items(SdkCore core) : IItems
         request.Entries.AddRange(entries.Select(e => new P.WearEntry { ItemId = e.ItemId, Amount = e.Amount }));
         return Leased(lease, request, (r, t) => r.LeaseToken = t, core.ItemClient.WearAsync, List);
     }
+
+    public Task<HostResult<HostItem>> KillAustralium(ICharacterLease killer, uint killSeq, string robotTemplate, int partySize, Vector3 position = default) =>
+        Leased(killer, new P.KillAustraliumRequest
+            {
+                RequestId = Rpc.NewRequestId(), CharacterId = killer.CharacterId, KillSeq = killSeq, RobotTemplate = robotTemplate,
+                PartySize = partySize, Position = position.ToProto(),
+            },
+            (r, t) => r.LeaseToken = t, core.ItemClient.KillAustraliumAsync, i => i.ToSdk());
+
+    public Task<HostResult<IReadOnlyList<HostAustraliumCredit>>> ClaimAustralium(ICharacterLease lease, string pileId) =>
+        Leased(lease, Action(lease, pileId), Tok, core.ItemClient.ClaimAustraliumAsync,
+            p => (IReadOnlyList<HostAustraliumCredit>)p.Credits.Select(c => new HostAustraliumCredit(c.CharacterId, c.Amount)).ToList());
+
+    public Task<HostResult<HostBreak>> Break(ICharacterLease lease, uint breakableSeq) =>
+        Leased(lease, new P.BreakRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, BreakableSeq = breakableSeq },
+            (r, t) => r.LeaseToken = t, core.ItemClient.BreakAsync, b => new HostBreak(b.Australium, b.Items.Select(i => i.ToSdk()).ToList()));
+
+    public Task<HostResult<IReadOnlyList<HostItem>>> Merge(ICharacterLease lease, string fromItemId, string intoItemId) =>
+        Leased(lease, new P.MergeRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, FromItemId = fromItemId, IntoItemId = intoItemId },
+            (r, t) => r.LeaseToken = t, core.ItemClient.MergeAsync, List);
+
+    public Task<HostResult<IReadOnlyList<HostItem>>> Swap(ICharacterLease lease, string itemA, string itemB) =>
+        Leased(lease, new P.SwapRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, ItemA = itemA, ItemB = itemB },
+            (r, t) => r.LeaseToken = t, core.ItemClient.SwapAsync, List);
 
     public Task<HostResult<IReadOnlyList<HostItem>>> OpenContainer(ICharacterLease lease, uint containerSeq) =>
         Leased(lease, new P.OpenContainerRequest { RequestId = Rpc.NewRequestId(), CharacterId = lease.CharacterId, ContainerSeq = containerSeq },

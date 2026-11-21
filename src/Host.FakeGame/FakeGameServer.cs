@@ -528,6 +528,14 @@ public sealed class FakeGameServer : IAsyncDisposable
             return drops.Ok ? (true, "", true, -1, "boss", drops.Value.Select(i => i.Id).ToList(), seq) : (false, Why(drops.Refusal), false, -1, "boss", [], seq);
         }
         var roll = _rules.KillRoll(Boot.InstanceSeed, seq, robot, Boot.Depth, 1);
+        if (roll.Australium > 0)
+        {
+            // SDK 2.8: the kill's Australium is a pile on the floor; the fake has no floor, so the killer picks it up at once.
+            var pile = await _sdk.Items.KillAustralium(p.Lease!, seq, robot, 1);
+            var picked = pile.Ok ? await _sdk.Items.ClaimAustralium(p.Lease!, pile.Value.Id) : null;
+            if (picked is not { Ok: true })
+                return (false, Why(picked?.Refusal ?? pile.Refusal), false, -1, "australium", [], seq);
+        }
         if (!roll.Drop) return (true, "", false, -1, "none", [], seq);
         if (p.Reserve?.NextForTier(roll.Tier) is { } item)
         {

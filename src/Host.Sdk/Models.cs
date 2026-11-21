@@ -19,13 +19,26 @@ public enum HostRepairKind { Town, Field }
 /// <summary>SDK 2.7: wear on one item, for <see cref="IItems.Wear"/>.</summary>
 public sealed record HostWear(string ItemId, int Amount);
 
+/// <summary>One member's share of a picked-up Australium pile (2.8).</summary>
+public sealed record HostAustraliumCredit(string CharacterId, long Amount);
+
+/// <summary>What one hero got from one breakable (2.8): Australium credited to them, items on the floor for them.</summary>
+public sealed record HostBreak(long Australium, IReadOnlyList<HostItem> Items);
+
 public enum HostOwnerKind { Unspecified, Reserve, World, Corpse, Vendor, Character, Stash, TradeEscrow, LostAndFound, Admin }
 
 /// <summary>An item as the ledger holds it. Only the host mints items; the SDK only ever receives them.</summary>
 public sealed record HostItem(
     string Id, ulong Seed, string BaseType, int Rarity, int ItemLevel, int Count, bool Identified, OpaquePayload Instance,
     HostOwnerKind Owner, string OwnerId, int Slot, long Version, string ForCharacter, string InstanceId, int Tier,
-    HostContainer Container = HostContainer.Backpack, HostItemState State = HostItemState.Live);
+    HostContainer Container = HostContainer.Backpack, HostItemState State = HostItemState.Live)
+{
+    /// <summary>The base type of a kill's Australium pile on the floor (2.8); pick it up with <c>IItems.ClaimAustralium</c>.</summary>
+    public const string AustraliumPileType = "host:australium";
+
+    /// <summary>A kill's Australium pile (2.8): <see cref="Count"/> is the roll, divided among the party when picked up.</summary>
+    public bool IsAustraliumPile => BaseType == AustraliumPileType;
+}
 
 /// <summary>Live, or how the item ended (2.7: a <c>Consume</c> that used the last of it gives <see cref="Consumed"/>).</summary>
 public enum HostItemState { Unspecified, Live, Swept, Destroyed, Consumed }
