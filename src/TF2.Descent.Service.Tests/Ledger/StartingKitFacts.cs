@@ -10,7 +10,7 @@ namespace TF2.Descent.Service.Tests.Ledger;
 public class StartingKitFacts
 {
     /// <summary>FakeGameRules' containers with a kit the rules themselves would refuse (a gun on the belt).</summary>
-    sealed class GunOnTheBelt(FakeGameRules f) : Contract10RulesFacts.Rules10(f), IGameRules
+    internal sealed class GunOnTheBelt(FakeGameRules f) : Contract10RulesFacts.Rules10(f), IGameRules
     {
         public int ContainerSlots(CharacterSheet sheet, ItemContainer container) => Fake.ContainerSlots(sheet, container);
         public string? PlaceRefusal(CharacterSheet sheet, RolledItem item, ItemContainer container, int slot) => Fake.PlaceRefusal(sheet, item, container, slot);

@@ -15,7 +15,7 @@ public sealed class HostRulesModuleAttribute(Type rulesType) : Attribute
 /// <summary>This contract's own version (semver), announced by the SDK and checked by the host.</summary>
 public static class HostContract
 {
-    public const string Version = "1.2.0";
+    public const string Version = "1.3.0";
 
     /// <summary>
     /// Whether a module built against <paramref name="moduleContract"/> can be loaded by a host
