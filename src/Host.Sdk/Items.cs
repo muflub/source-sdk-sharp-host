@@ -113,6 +113,12 @@ public interface IItems
     /// </summary>
     Task<HostResult<IReadOnlyList<HostAustraliumCredit>>> ClaimAustralium(ICharacterLease lease, string pileId);
     Task<HostResult<IReadOnlyList<HostItem>>> Salvage(ICharacterLease lease, string itemId);
+    /// <summary>
+    /// Everything carried (backpack, equipped, belt) becomes the corpse's; the result is those items.
+    /// 2.9: the Australium stays with the character, and a softcore character is minted the class's
+    /// starting kit in the same write (it is not in the result; it is on the character, as
+    /// <see cref="GetBackpack"/> and the next join show). A hardcore character falls and gets none.
+    /// </summary>
     Task<HostResult<IReadOnlyList<HostItem>>> RecordDeath(ICharacterLease lease, Vector3 position = default);
     Task<HostResult<IReadOnlyList<HostItem>>> LootCorpse(ICharacterLease lease);
     Task<HostResult<IReadOnlyList<HostItem>>> ListWorldItems();

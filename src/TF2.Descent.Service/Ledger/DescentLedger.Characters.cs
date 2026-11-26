@@ -13,6 +13,18 @@ public sealed partial class DescentLedger
         var sheet = r.NewCharacter(className, name, hardcore);
         var s = r.Sheets.Summarize(sheet);
         var ch = await tx.Characters.Create(account, s.ClassName, s.Name, hardcore, sheet.Data, sheet.SchemaVersion, s.Level, s.Xp);
+        var kit = await MintStartingKit(tx, r, ch, className, sheet, "starting_kit", null);
+        await tx.Audit.Write("character.create", ch.Id, null, new { account, className, name, hardcore, instance = caller.Id, kit });
+        return ch;
+    }
+
+    /// <summary>
+    /// Mints the rules' <see cref="IGameRules.StartingKit"/> to <paramref name="ch"/> at the slots the
+    /// rules name, which must be empty (a new character, or one whose carried items just went to the
+    /// corpse). Returns how many items were minted.
+    /// </summary>
+    async Task<int> MintStartingKit(IWriteTx tx, IGameRules r, CharacterRecord ch, string className, CharacterSheet sheet, string reason, string? requestId)
+    {
         var kit = r.StartingKit(className, sheet, NewSeed());
         var taken = new HashSet<(ItemContainer, int)>();
         foreach (var k in kit)
@@ -20,12 +32,11 @@ public sealed partial class DescentLedger
             // The kit is the rules' own: one that does not fit its own containers is a rules bug, refused loudly.
             if (k.Slot < 0 || k.Slot >= r.ContainerSlots(sheet, k.Container) || !taken.Add((k.Container, k.Slot)))
                 throw HostRefusal.Precondition("rules_bad_kit", $"{k.Item.BaseType} in {k.Container} slot {k.Slot}");
-            if (r.PlaceRefusal(sheet, k.Item, k.Container, k.Slot) is { } reason)
-                throw HostRefusal.Precondition("rules_bad_kit", $"{k.Item.BaseType} in {k.Container} slot {k.Slot}: {reason}");
-            await tx.Items.Mint(ToNew(k.Item, ch.Level), OwnerKind.Character, ch.Id, null, k.Slot, "starting_kit", null, k.Container);
+            if (r.PlaceRefusal(sheet, k.Item, k.Container, k.Slot) is { } refusal)
+                throw HostRefusal.Precondition("rules_bad_kit", $"{k.Item.BaseType} in {k.Container} slot {k.Slot}: {refusal}");
+            await tx.Items.Mint(ToNew(k.Item, ch.Level), OwnerKind.Character, ch.Id, null, k.Slot, reason, requestId, k.Container);
         }
-        await tx.Audit.Write("character.create", ch.Id, null, new { account, className, name, hardcore, instance = caller.Id, kit = kit.Count });
-        return ch;
+        return kit.Count;
     }
 
     /// <summary>A hub deletes; refused while any instance leases the character.</summary>

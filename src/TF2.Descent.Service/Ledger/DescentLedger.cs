@@ -686,7 +686,12 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
 
     // ------------------------------------------------------------------ death, corpse, Lost & Found (D6, D7)
 
-    /// <summary>Everything carried becomes Corpse-owned on this instance; the Australium held moves onto the corpse.</summary>
+    /// <summary>
+    /// Everything carried becomes Corpse-owned on this instance; a softcore character is then minted
+    /// the class's starting kit, and the result is the corpse's items, not the kit. The Australium
+    /// stays with the character (ruling 2026-11-22). A corpse written before that ruling still holds what it took
+    /// (ref <c>corpse:{instance}</c>), and looting, the reap and a level fork still return or move it.
+    /// </summary>
     public const string DeathAction = "character.death";
 
     public async Task<IReadOnlyList<ItemRecord>> RecordDeath(IWriteTx tx, InstanceRecord caller, string characterId, byte[] token, string requestId)
@@ -697,12 +702,13 @@ public sealed partial class DescentLedger(IRulesProvider rules, IOptions<Service
         foreach (var i in carried)
             moved.Add(await tx.Items.Move(new ItemMove(i.Id, OwnerKind.Character, OwnerKind.Corpse, characterId, "death",
                 Slot: i.Slot, InstanceId: caller.Id, RequestId: requestId, Container: i.Container)));
-        if (ch.Australium > 0)
-            await tx.Characters.AddAustralium(characterId, -ch.Australium, "corpse", $"corpse:{caller.Id}");
+        var kit = 0;
         if (ch.Hardcore)
             await tx.Characters.Update(characterId, ch.Version, c => c with { Fallen = true });
+        else // ruling 2026-11-22: a respawn always gets the class's starting kit, on the ledger
+            kit = await MintStartingKit(tx, RulesFor(caller), ch, ch.ClassName, Sheet(ch), "respawn_kit", requestId);
         // D-H16: where they died, so ReturnToCorpse goes back to that level (depth + level hash).
-        await tx.Audit.Write(DeathAction, characterId, null, new { instance = caller.Id, depth = caller.Depth, level = caller.LevelCopy, items = moved.Count, australium = ch.Australium });
+        await tx.Audit.Write(DeathAction, characterId, null, new { instance = caller.Id, depth = caller.Depth, level = caller.LevelCopy, items = moved.Count, kit });
         return moved;
     }
 

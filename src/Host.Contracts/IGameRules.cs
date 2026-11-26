@@ -29,6 +29,15 @@ public interface IGameRules
 
     ValidationResult ValidateCheckpoint(CharacterSheet before, CharacterSheet after, CheckpointEvidence evidence);
 
+    /// <summary>
+    /// An operator's edit of a sheet (contract 1.3): the admin character edit asks this, never
+    /// <see cref="ValidateCheckpoint"/>, so the rules can tell an edit, which has no play evidence,
+    /// from a checkpoint and let it raise XP or level. The default is the 1.2 behavior: a
+    /// checkpoint with empty evidence.
+    /// </summary>
+    ValidationResult ValidateEdit(CharacterSheet before, CharacterSheet after) =>
+        ValidateCheckpoint(before, after, new CheckpointEvidence([], 0));
+
     TradeResult ApplyTrade(TradeState trade);
 
     /// <summary>The RPG layout of one level (D-H7): rooms, cells, rotations, roles.</summary>

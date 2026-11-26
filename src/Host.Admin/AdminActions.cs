@@ -194,7 +194,7 @@ public sealed class AdminActions(IHostData data, IRulesProvider rules, ServiceOp
         var again = r.Sheets.FromJson(r.Sheets.ToJson(after));
         if (!again.Data.AsSpan().SequenceEqual(after.Data) || again.SchemaVersion != after.SchemaVersion)
             throw HostRefusal.Precondition("no_round_trip", "the sheet does not survive the rules codec's JSON round trip");
-        var verdict = r.ValidateCheckpoint(before, after, new CheckpointEvidence([], 0));
+        var verdict = r.ValidateEdit(before, after); // contract 1.3: an edit is not a checkpoint
         if (!verdict.Ok)
             throw HostRefusal.Precondition("rule:" + verdict.FailedRule, $"the rules refuse this sheet: {verdict.FailedRule}");
         var s = r.Sheets.Summarize(after);

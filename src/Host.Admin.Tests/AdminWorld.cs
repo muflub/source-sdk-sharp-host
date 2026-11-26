@@ -24,14 +24,15 @@ public sealed class AdminWorld : IAsyncDisposable
     public string Actor => Options.Admin.Actor;
     int _n;
 
-    public AdminWorld()
+    /// <param name="rules">The rules the actions see, built over <see cref="Rules"/>; FakeGameRules itself when omitted.</param>
+    public AdminWorld(Func<FakeGameRules, IGameRules>? rules = null)
     {
         Modules = new AdminFakeModules(D.Data);
         Backups = new AdminFakeBackups(D.Clock);
         Lifecycle = new AdminFakeLifecycle(D.Data);
         Pods = new FakeInstanceHost(D.Clock);
         Catalog = new PackCatalog(D.Data, new FakePackValidator(Options.Mod.Name), new LevelStorage(Options.MapPool), Options, Signal);
-        Actions = new AdminActions(D.Data, new SingleRulesProvider(Rules), Options,
+        Actions = new AdminActions(D.Data, new SingleRulesProvider(rules?.Invoke(Rules) ?? Rules), Options,
             new AdminCollaborators(Lifecycle, Pods, Catalog, PoolSignal: Signal, Ledger: Ledger, Gateway: Gateway, Modules: Modules, Backups: Backups));
     }
 

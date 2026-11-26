@@ -75,15 +75,32 @@ public class LedgerFlowFacts
         await using var _ = h;
         var ch = await h.Character();
         await h.Lease(ch, h.Level);
-        await h.Give(ch); await h.Give(ch);
+        var given = new[] { (await h.Give(ch)).Id, (await h.Give(ch)).Id };
         var moved = await h.W(tx => h.Ledger.RecordDeath(tx, h.Level, ch, h.Token(ch), h.Req()));
-        Assert.Equal(2, moved.Count);
+        Assert.Equal(given.Order(), moved.Select(i => i.Id).Order());
         Assert.All(moved, i => Assert.Equal((OwnerKind.Corpse, ch, h.Level.Id), (i.OwnerKind, i.OwnerId, i.InstanceId)));
-        Assert.Equal(0, await h.R(tx => tx.Items.Count(new ItemQuery(OwnerKind: OwnerKind.Character, OwnerId: ch))));
+        // What the character carries now is the respawn kit alone (RespawnKitFacts), none of what was given.
+        var carried = await h.R(tx => tx.Items.Query(new ItemQuery(OwnerKind: OwnerKind.Character, OwnerId: ch)));
+        Assert.Empty(carried.Select(i => i.Id).Intersect(given));
     }
 
     [Fact]
-    public async Task Death_carries_the_australium_onto_the_corpse_and_looting_returns_it()
+    public async Task Death_leaves_the_australium_with_the_character()
+    {
+        // Ruling 2026-11-22: Australium stays with the player; the corpse takes items only.
+        var h = await LedgerHarness.Create();
+        await using var _ = h;
+        var ch = await h.Character();
+        await h.Lease(ch, h.Level);
+        await h.W(tx => tx.Characters.AddAustralium(ch, 40, "test", null));
+        await h.Give(ch);
+        await h.W(tx => h.Ledger.RecordDeath(tx, h.Level, ch, h.Token(ch), h.Req()));
+        Assert.Equal(40, (await h.R(tx => tx.Characters.Get(ch)))!.Australium);
+        Assert.DoesNotContain(await h.R(tx => tx.Characters.AustraliumLedger(ch)), e => e.Ref == $"corpse:{h.Level.Id}");
+    }
+
+    [Fact]
+    public async Task Looting_the_corpse_returns_no_australium_the_death_did_not_take()
     {
         var h = await LedgerHarness.Create();
         await using var _ = h;
@@ -92,7 +109,6 @@ public class LedgerFlowFacts
         await h.W(tx => tx.Characters.AddAustralium(ch, 40, "test", null));
         await h.Give(ch);
         await h.W(tx => h.Ledger.RecordDeath(tx, h.Level, ch, h.Token(ch), h.Req()));
-        Assert.Equal(0, (await h.R(tx => tx.Characters.Get(ch)))!.Australium);
         var looted = await h.W(tx => h.Ledger.LootCorpse(tx, h.Level, ch, h.Token(ch), h.Req()));
         Assert.Single(looted);
         Assert.Equal(40, (await h.R(tx => tx.Characters.Get(ch)))!.Australium);
@@ -184,9 +200,10 @@ public class LedgerFlowFacts
         var back = await h.W(tx => h.Ledger.Reclaim(tx, h.Hub, ch, h.Token(ch), entry.Id, h.Req()));
         Assert.Equal((claimed.Id, OwnerKind.Character), (back.Id, back.OwnerKind));
         var (minted, terminal, live) = await h.Totals();
-        Assert.Equal((2L, 1L, 1L), (minted, terminal, live));
-        // The kill booked the depth's Australium (3); death carried it onto the corpse and the
-        // softcore reap returned it; the reclaim paid the fee.
+        // 2 reserve + 3 respawn kit minted; the swept reserve item ended; the reclaimed item and the kit live.
+        Assert.Equal((5L, 1L, 4L), (minted, terminal, live));
+        // The kill booked the depth's Australium (3); death left it on the character; the
+        // reclaim paid the fee.
         Assert.Equal(h.Level.Depth + 1000 - entry.Fee, (await h.R(tx => tx.Characters.Get(ch)))!.Australium);
     }
 

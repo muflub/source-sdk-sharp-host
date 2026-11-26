@@ -220,8 +220,9 @@ unchanged it answers live at once. `Booting` there is refused `HostError.NotBoot
 - **Pickup:** `Items.Claim(lease, itemId)`. **Drop:** `Items.Drop`. Inventory moves, stash,
   vendors, crafting: the other `IItems` methods, all with the lease.
 - **Death:** `Items.RecordDeath(lease, position)` — everything carried becomes the corpse's in
-  that one call. A corpse left behind goes to Lost & Found when the level ends;
-  `LostAndFound.List` / `Reclaim` (the fee is charged in Australium).
+  that one call, and (2.9) a softcore character is minted the class's starting kit; the
+  Australium stays with the character. A corpse left behind goes to Lost & Found when the
+  level ends; `LostAndFound.List` / `Reclaim` (the fee is charged in Australium).
 - **Travel:** from the hub `Travel.RequestDescent(lease, partyId, depth)`; on a level
   `Travel.StairsDown(...)`, `TownPortal(lease)`, `ReturnThroughPortal`, `ReturnToCorpse`.
   `Started` means a `PrepareHop` follows; `Waiting` means a level is being prepared (show a
@@ -239,7 +240,7 @@ the members to get the behavior:
 |---|---|---|
 | `Move(lease, item, container, slot)`; `HostItem.Container` is `Backpack`, `Equipped` (slot = index into `EquipSlots`; map it to the name with your rules) or `Belt`. The 2.6 `Move(lease, item, slot)` is a backpack move | `EquipSlots`, `ContainerSlots(sheet, container)`, `PlaceRefusal(sheet, item, container, slot)` | refuses `bad_slot` (outside the container), `slot_taken` (same container), or your reason (`potions_only`, `wrong_slot`, …). Only backpack items take cells: pickups and mints land in the first free backpack cell. Death takes all three containers to the corpse; looting puts them back in backpack cells |
 | `Consume(lease, item, count = 1)`: a potion from the belt, a tome | `Consume(sheet, item, count)`: `Consumed = [0]`, or `Produced = [the stack re-encoded with its lower count]` | ends the item or lowers its count in place, audited `item.consumed`. The returned `HostItem.State` is `Consumed` when the last one is used. The effect (the heal) is yours. Without the member, a partial stack is refused `unsupported` |
-| nothing: it happens at `Characters.Create` | `StartingKit(className, sheet, seed)` → `StartingItem(item, container, slot)` | mints the kit in the creating transaction. Every kit item must replay (`Replays`), as every carried item must at a checkpoint; a kit that breaks its own containers refuses the creation, `rules_bad_kit` |
+| nothing: it happens at `Characters.Create` (and, from 2.9, at every softcore death) | `StartingKit(className, sheet, seed)` → `StartingItem(item, container, slot)` | mints the kit in the creating transaction. Every kit item must replay (`Replays`), as every carried item must at a checkpoint; a kit that breaks its own containers refuses the creation, `rules_bad_kit` |
 | `Repair(lease, item, HostRepairKind.Town)` (hub only, costs Australium) or `Repair(lease, item, HostRepairKind.Field, kitId)` (anywhere, uses the kit up) | `Repair(item, kind, kit, seed)`; `Produced[0]` is the item in place, `Consumed` may name the kit (index 1) | changes the item in place (same id, same slot) and terminates the kit in the same write. The 2.6 `Repair(lease, item)` is the town repair |
 | `Wear(lease, [HostWear(item, amount), …])`: up to 64 items per call, batch it | `Wear(item, amount)`: `Produced[0]` is the item in place | one transaction; any refusal refuses the whole batch |
 | `OpenContainer(lease, containerSeq)`: a supply crate, a locker, numbered per level | `ContainerDrops(instanceSeed, containerSeq, depth, opener)`, pure | replays the roll and mints it to this floor for the opener (`ForCharacter`), once per container and character; a second open is `already_opened`, even when the first gave nothing. Pick it up with `Claim` |
@@ -259,6 +260,18 @@ Every 1.2 member has a default body; a 1.0 or 1.1 rules module still loads and b
 | `Break(lease, breakableSeq)` once per hero in the room, each with their own lease; numbered apart from containers | `BreakableDrops(instanceSeed, breakableSeq, depth, opener)` → `BreakableRoll(Australium, Items)`; the empty roll for a blast, a cloud or an ambush | replays each hero's roll: Australium credited to them, items to the floor for them (`HostBreak`). Once per breakable and hero, `already_broken` after, even when the roll was empty |
 | `Swap(lease, a, b)`: equip ↔ backpack, belt ↔ backpack, an equip through a full backpack | `PlaceRefusal` for both destinations | exchanges the two items' container and slot in one write; one refusal refuses both |
 | `Merge(lease, from, into)`: two partial stacks | `Merge(source, target)`: `[target]` with the source `Consumed`, or `[target, what is left]`, re-encoded | keeps the count (`rules_bad_merge` if the two stacks' total changes); returns [into, from]. Without the member, `unsupported` |
+
+### SDK 2.9.0 / Contracts 1.3.0
+
+Rulings of 2026-11-22, and one 1.3 member (with a default body; a 1.0 to 1.2 rules module
+still loads and behaves as before).
+
+| game side | rules side | what the host does |
+|---|---|---|
+| `RecordDeath(lease, position)`, as before | nothing new: `StartingKit(className, sheet, seed)` (1.1) | **the Australium stays with the character**: the corpse takes items only. A corpse written before 2.9 still holds what it took, and looting, the reap and Lost & Found still return it. After the carried items move to the corpse, a softcore character is minted the class's `StartingKit` in the same write (audit `character.death` counts it as `kit`, mint reason `respawn_kit`). The death result is still the corpse's items alone; the kit is on the character. A hardcore character falls and gets none. A kit your rules refuse refuses the death (`rules_bad_kit`), which then moves nothing. Every death mints a kit, so price kit items at 0 in `Price(…, Sell)` or dying farms them |
+| nothing: the admin UI's character edit | `ValidateEdit(before, after)` | the edit asks this, never `ValidateCheckpoint`, so rules that make an empty `CheckpointEvidence` earn nothing can still let an operator raise XP or level. The default is the 1.2 behavior: `ValidateCheckpoint(before, after, empty evidence)`. A game server's checkpoint still asks `ValidateCheckpoint` |
+
+No proto change.
 
 ### SDK 2.8.1
 
